@@ -30,15 +30,39 @@ esac
 PLATFORM_SCRIPT_DIR="$SCRIPT_DIR/$PLATFORM"
 
 # Check if platform-specific uninstaller exists
-if [ ! -f "$PLATFORM_SCRIPT_DIR/uninstall.sh" ]; then
-    echo "❌ Uninstaller not found for $PLATFORM"
-    echo "   Expected: $PLATFORM_SCRIPT_DIR/uninstall.sh"
-    exit 1
+if [ "$PLATFORM" = "windows" ]; then
+    UNINSTALL_SCRIPT="$PLATFORM_SCRIPT_DIR/uninstall.ps1"
+    if [ ! -f "$UNINSTALL_SCRIPT" ]; then
+        echo "❌ Uninstaller not found for $PLATFORM"
+        echo "   Expected: $UNINSTALL_SCRIPT"
+        exit 1
+    fi
+else
+    UNINSTALL_SCRIPT="$PLATFORM_SCRIPT_DIR/uninstall.sh"
+    if [ ! -f "$UNINSTALL_SCRIPT" ]; then
+        echo "❌ Uninstaller not found for $PLATFORM"
+        echo "   Expected: $UNINSTALL_SCRIPT"
+        exit 1
+    fi
+    # Make sure the platform uninstaller is executable
+    chmod +x "$UNINSTALL_SCRIPT"
 fi
-
-# Make sure the platform uninstaller is executable
-chmod +x "$PLATFORM_SCRIPT_DIR/uninstall.sh"
 
 # Run the platform-specific uninstaller
 cd "$PROJECT_DIR"
-exec "$PLATFORM_SCRIPT_DIR/uninstall.sh"
+
+if [ "$PLATFORM" = "windows" ]; then
+    # For Windows, run PowerShell script
+    if command -v powershell.exe >/dev/null 2>&1; then
+        powershell.exe -ExecutionPolicy Bypass -File "$UNINSTALL_SCRIPT"
+    elif command -v pwsh >/dev/null 2>&1; then
+        pwsh -ExecutionPolicy Bypass -File "$UNINSTALL_SCRIPT"
+    else
+        echo "❌ PowerShell not found. Please install PowerShell or use the .bat files:"
+        echo "   $PLATFORM_SCRIPT_DIR/uninstall.bat"
+        exit 1
+    fi
+else
+    # For Unix-like systems, run shell script
+    exec "$UNINSTALL_SCRIPT"
+fi

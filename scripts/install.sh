@@ -47,17 +47,41 @@ if [ ! -d "$PLATFORM_SCRIPT_DIR" ]; then
     exit 1
 fi
 
-if [ ! -f "$PLATFORM_SCRIPT_DIR/install.sh" ]; then
-    echo "❌ Installer not found for $PLATFORM"
-    echo "   Expected: $PLATFORM_SCRIPT_DIR/install.sh"
-    exit 1
+if [ "$PLATFORM" = "windows" ]; then
+    INSTALL_SCRIPT="$PLATFORM_SCRIPT_DIR/install.ps1"
+    if [ ! -f "$INSTALL_SCRIPT" ]; then
+        echo "❌ Installer not found for $PLATFORM"
+        echo "   Expected: $INSTALL_SCRIPT"
+        exit 1
+    fi
+else
+    INSTALL_SCRIPT="$PLATFORM_SCRIPT_DIR/install.sh"
+    if [ ! -f "$INSTALL_SCRIPT" ]; then
+        echo "❌ Installer not found for $PLATFORM"
+        echo "   Expected: $INSTALL_SCRIPT"
+        exit 1
+    fi
+    # Make sure the platform installer is executable
+    chmod +x "$INSTALL_SCRIPT"
 fi
-
-# Make sure the platform installer is executable
-chmod +x "$PLATFORM_SCRIPT_DIR/install.sh"
 
 # Run the platform-specific installer
 echo "🚀 Running $PLATFORM installer..."
 echo
 cd "$PROJECT_DIR"
-exec "$PLATFORM_SCRIPT_DIR/install.sh"
+
+if [ "$PLATFORM" = "windows" ]; then
+    # For Windows, run PowerShell script
+    if command -v powershell.exe >/dev/null 2>&1; then
+        powershell.exe -ExecutionPolicy Bypass -File "$PLATFORM_SCRIPT_DIR/install.ps1"
+    elif command -v pwsh >/dev/null 2>&1; then
+        pwsh -ExecutionPolicy Bypass -File "$PLATFORM_SCRIPT_DIR/install.ps1"
+    else
+        echo "❌ PowerShell not found. Please install PowerShell or use the .bat files:"
+        echo "   $PLATFORM_SCRIPT_DIR/install.bat"
+        exit 1
+    fi
+else
+    # For Unix-like systems, run shell script
+    exec "$PLATFORM_SCRIPT_DIR/install.sh"
+fi

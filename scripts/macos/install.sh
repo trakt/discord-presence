@@ -37,10 +37,27 @@ if [ ! -d "$PROJECT_DIR/.venv" ]; then
     .venv/bin/pip install -r requirements.txt
 else
     echo "✅ Virtual environment already exists"
-    echo "📦 Updating dependencies..."
-    cd "$PROJECT_DIR"
-    .venv/bin/pip install --upgrade pip
-    .venv/bin/pip install -r requirements.txt
+    
+    # Check if the virtual environment has correct paths (not from a different project)
+    echo "🔍 Validating virtual environment..."
+    if ! .venv/bin/python --version >/dev/null 2>&1 || ! .venv/bin/pip --version >/dev/null 2>&1; then
+        echo "⚠️  Virtual environment has invalid paths (likely copied from another project)"
+        echo "🗑️  Removing invalid virtual environment..."
+        rm -rf .venv
+        
+        echo "🐍 Creating new Python virtual environment..."
+        cd "$PROJECT_DIR"
+        python3 -m venv .venv
+        
+        echo "📦 Installing dependencies..."
+        .venv/bin/pip install --upgrade pip
+        .venv/bin/pip install -r requirements.txt
+    else
+        echo "📦 Updating dependencies..."
+        cd "$PROJECT_DIR"
+        .venv/bin/pip install --upgrade pip
+        .venv/bin/pip install -r requirements.txt
+    fi
 fi
 
 # Check if .env file exists

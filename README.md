@@ -25,7 +25,7 @@ This bot connects your [Trakt.tv](https://trakt.tv) account to Discord, displayi
 
 1. **Download this project:**
    ```bash
-   git clone https://github.com/trakt/discord-presence.git
+   git clone <your-repository-url>
    cd discord-presence
    ```
 
@@ -171,16 +171,16 @@ This project includes scripts to easily install the app as a daemon that starts 
 
 **Platform Support:**
 - ✅ **macOS** - Uses LaunchAgents for proper user-level daemon management
-- 🚧 **Windows** - Coming soon (Task Scheduler + PowerShell)  
+- ✅ **Windows** - Uses Task Scheduler with PowerShell scripts  
 - 🚧 **Linux** - Coming soon (systemd user services)
 
-**What the macOS daemon installer does:**
+**What the daemon installer does:**
 - ✅ Creates and activates Python virtual environment
 - ✅ Installs all dependencies automatically
-- ✅ Sets up macOS LaunchAgent for auto-start on login
+- ✅ Sets up auto-start on login (macOS: LaunchAgent, Windows: Task Scheduler)
 - ✅ Creates log files for monitoring
 - ✅ Handles automatic restarts if the app crashes
-- ✅ Runs in background without terminal window
+- ✅ Runs in background without terminal/command prompt window
 
 **Manual Installation Examples:**
 
@@ -219,10 +219,15 @@ discord-presence/
 │   │   ├── install.sh                        # macOS daemon installer
 │   │   ├── uninstall.sh                      # macOS daemon uninstaller
 │   │   ├── status.sh                         # macOS status checker
-│   │   ├── com.user.trakt-discord-presence.plist  # LaunchAgent template
 │   │   └── README.md                         # macOS documentation
-│   ├── windows/                              # Windows-specific files (coming soon)
-│   │   └── README.md                         # Windows documentation
+│   ├── windows/                              # Windows-specific files
+│   │   ├── install.ps1                      # Windows PowerShell installer
+│   │   ├── uninstall.ps1                    # Windows PowerShell uninstaller
+│   │   ├── status.ps1                       # Windows PowerShell status checker
+│   │   ├── install.bat                      # Windows batch wrapper
+│   │   ├── uninstall.bat                    # Windows batch wrapper
+│   │   ├── status.bat                       # Windows batch wrapper
+│   │   └── README.md                        # Windows documentation
 │   └── linux/                                # Linux-specific files (coming soon)
 │       └── README.md                         # Linux documentation
 ├── logs/                                      # Daemon log files (created by installer)

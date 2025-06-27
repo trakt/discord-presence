@@ -1,33 +1,49 @@
-# Windows Service Installation
+# Windows Task Scheduler Installation
 
-This directory will contain scripts for installing Trakt Discord Presence as a Windows service.
+Windows support using Task Scheduler and PowerShell scripts.
 
-## Planned Implementation:
-- Windows Task Scheduler integration
-- PowerShell installation scripts
-- Windows Service wrapper (optional)
-- Auto-start on user login
-- System tray integration (optional)
+## 🚀 Usage:
 
-## Planned Files:
-- `install.ps1` - PowerShell installer script
-- `uninstall.ps1` - PowerShell uninstaller script  
-- `status.ps1` - Status checker script
-- `install.bat` - Batch file wrapper for install.ps1
-- `task-scheduler.xml` - Task Scheduler template
-
-## Usage (when implemented):
+### Cross-Platform (Recommended)
 ```bash
-# From project root (Git Bash/PowerShell):
-./scripts/install.sh    # Cross-platform installer (auto-detects Windows)
-./scripts/status.sh     # Cross-platform status checker  
-./scripts/uninstall.sh  # Cross-platform uninstaller
-
-# Or run Windows-specific scripts:
-./scripts/windows/install.ps1
-./scripts/windows/status.ps1
-./scripts/windows/uninstall.ps1
+./scripts/install.sh    # Auto-detects Windows
+./scripts/status.sh     # Check status and logs
+./scripts/uninstall.sh  # Remove daemon
 ```
 
-## Contribution Welcome:
-If you'd like to implement Windows support, please see the macOS implementation as a reference and submit a pull request!
+### Windows-Specific Options
+```powershell
+# PowerShell:
+.\scripts\windows\install.ps1
+.\scripts\windows\status.ps1
+.\scripts\windows\uninstall.ps1
+
+# Double-click in File Explorer:
+scripts\windows\install.bat
+scripts\windows\status.bat
+scripts\windows\uninstall.bat
+```
+
+## 📁 Files:
+- `install.ps1` / `install.bat` - Installs scheduled task
+- `uninstall.ps1` / `uninstall.bat` - Removes scheduled task  
+- `status.ps1` / `status.bat` - Shows task status and logs
+
+## ⚙️ How it works:
+- Creates Windows scheduled task "Trakt-Discord-Presence"
+- Runs at user logon (no admin required)
+- Uses project's Python virtual environment
+- Auto-restarts if app crashes
+- Logs to `logs/` directory
+
+## 🛠️ Requirements:
+- Windows 10+ with PowerShell 5.0+
+- Python 3.7+ in PATH
+- Discord Desktop app
+
+## 🔧 Manual task control:
+```powershell
+Start-ScheduledTask -TaskName "Trakt-Discord-Presence"
+Stop-ScheduledTask -TaskName "Trakt-Discord-Presence"
+# Or use Task Scheduler GUI: Win+R → taskschd.msc
+```
