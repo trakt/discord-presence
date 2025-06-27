@@ -1,3 +1,2 @@
-pypresence
 pytrakt
 python-dotenv
