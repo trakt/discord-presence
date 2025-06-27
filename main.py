@@ -110,24 +110,138 @@ def get_watching_status():
         print(f"Error getting watching status: {e}")
         return None
 
+def get_poster_url(watching_item):
+    """
+    Get poster URL for the currently watching show/movie.
+    Returns a valid URL string or None if not available.
+    """
+    try:
+        # For TV episodes, get the show poster by searching for the show
+        if hasattr(watching_item, 'show') and watching_item.show:
+            show_title = str(watching_item.show)
+            
+            # Search for the show to get full object with TMDB ID
+            try:
+                from trakt.tv import search
+                search_results = search(show_title, search_type='show')
+                if search_results and len(search_results) > 0:
+                    show_obj = search_results[0]  # Take first/best match
+                    
+                    # Try TMDB poster URL first (best quality)
+                    if hasattr(show_obj, 'tmdb') and show_obj.tmdb:
+                        # Use TMDB API v3 poster URL format
+                        # Note: This requires the poster_path from TMDB API, but we'll try a common approach
+                        # For now, let's use Trakt's poster if TMDB doesn't work
+                        pass
+                    
+                    # Use Trakt's poster images
+                    if hasattr(show_obj, 'images') and show_obj.images:
+                        extracted = extract_image_url(show_obj.images)
+                        if extracted:
+                            return extracted
+                            
+            except Exception as e:
+                print(f"Error searching for show: {e}")
+            
+            # Fallback: try to extract from episode images
+            if hasattr(watching_item, 'images') and watching_item.images:
+                return extract_image_url(watching_item.images)
+                
+        # For movies, try episode/movie TMDB ID
+        elif hasattr(watching_item, 'tmdb') and watching_item.tmdb:
+            # For movies, we could use TMDB API but for now use Trakt images
+            pass
+        
+        # Final fallback: try any images on the item
+        if hasattr(watching_item, 'images') and watching_item.images:
+            return extract_image_url(watching_item.images)
+        
+        if hasattr(watching_item, 'images_ext') and watching_item.images_ext:
+            return extract_image_url(watching_item.images_ext)
+        
+        return None
+        
+    except Exception as e:
+        print(f"Error getting poster URL: {e}")
+        return None
+
+def extract_image_url(image_data):
+    """
+    Extract a usable URL string from Trakt's image data structure.
+    Prioritizes posters over screenshots for better visuals.
+    """
+    try:
+        if isinstance(image_data, str):
+            # Already a string URL
+            return image_data
+        elif isinstance(image_data, dict):
+            # Look for poster images first (best for shows), then other types
+            if 'poster' in image_data:
+                poster = image_data['poster']
+                if isinstance(poster, list) and len(poster) > 0:
+                    # Add https prefix if missing for Trakt URLs
+                    url = poster[0]
+                    return f"https://{url}" if not url.startswith('http') else url
+                elif isinstance(poster, str):
+                    return f"https://{poster}" if not poster.startswith('http') else poster
+            
+            elif 'thumb' in image_data:
+                thumb = image_data['thumb']
+                if isinstance(thumb, list) and len(thumb) > 0:
+                    url = thumb[0]
+                    return f"https://{url}" if not url.startswith('http') else url
+                elif isinstance(thumb, str):
+                    return f"https://{thumb}" if not thumb.startswith('http') else thumb
+            
+            elif 'fanart' in image_data:
+                fanart = image_data['fanart']
+                if isinstance(fanart, list) and len(fanart) > 0:
+                    url = fanart[0]
+                    return f"https://{url}" if not url.startswith('http') else url
+                elif isinstance(fanart, str):
+                    return f"https://{fanart}" if not fanart.startswith('http') else fanart
+            
+            elif 'screenshot' in image_data:
+                screenshot = image_data['screenshot']
+                if isinstance(screenshot, list) and len(screenshot) > 0:
+                    url = screenshot[0]
+                    return f"https://{url}" if not url.startswith('http') else url
+                elif isinstance(screenshot, str):
+                    return f"https://{screenshot}" if not screenshot.startswith('http') else screenshot
+            
+            # If it's a dict, try to get any URL-like value
+            for key, value in image_data.items():
+                if isinstance(value, list) and len(value) > 0:
+                    url = value[0]
+                    return f"https://{url}" if not url.startswith('http') else url
+                elif isinstance(value, str) and ('http' in value or 'www.' in value or '.jpg' in value or '.png' in value or '.webp' in value):
+                    return f"https://{value}" if not value.startswith('http') else value
+        
+        return None
+    except Exception as e:
+        print(f"Error extracting image URL: {e}")
+        return None
+
 def connect_to_discord():
     """
-    Establishes connection to Discord Rich Presence.
+    Attempts to connect to Discord Rich Presence.
     Returns (rpc_client, success_bool)
     """
     try:
+        print("Attempting Discord connection...")
         rpc = Presence(DISCORD_CLIENT_ID)
         rpc.connect()
         print("Connected to Discord Rich Presence.")
         return rpc, True
     except Exception as e:
         print(f"Could not connect to Discord: {e}")
+        print("Will continue without Discord and retry later...")
         return None, False
 
 def update_discord_presence_with_reconnect(rpc_container, watching_item):
     """
     Updates Discord Rich Presence with automatic reconnection handling.
-    rpc_container is a list containing [rpc_client] so we can modify it.
+    Uses "Watching" activity type with dynamic poster artwork.
     """
     if not rpc_container[0]:
         # No connection, try to reconnect
@@ -140,14 +254,19 @@ def update_discord_presence_with_reconnect(rpc_container, watching_item):
         details = ""
         state = ""
 
-        # Use current time as a placeholder for the start time
+        # Use current time as start time
         start_time = int(time.time())
 
-        # Check if it's a TV episode or movie based on attributes
+        # Get poster artwork
+        poster_url = get_poster_url(watching_item)
+        large_image = poster_url if poster_url else "trakt_logo"
+        small_image = "trakt_logo"  # Always show Trakt logo in corner
+
+        # Check if it's a TV episode or movie
         if hasattr(watching_item, 'show') and watching_item.show:
             # This is a TV episode
             show_title = watching_item.show.title() if callable(watching_item.show.title) else watching_item.show.title
-            details = f"Watching {show_title}"
+            details = show_title  # Main title is just the show name
             
             season = getattr(watching_item, 'season', '?')
             number = getattr(watching_item, 'number', '?')
@@ -157,17 +276,22 @@ def update_discord_presence_with_reconnect(rpc_container, watching_item):
                 
         elif hasattr(watching_item, 'title'):
             # This is likely a movie
-            details = f"Watching {watching_item.title}"
+            details = watching_item.title
             if hasattr(watching_item, 'year') and watching_item.year:
                 state = f"({watching_item.year})"
 
         print(f"Updating Discord: {details} - {state}")
+        if poster_url:
+            print(f"Using poster: {poster_url}")
+        
         try:
             rpc_container[0].update(
                 details=details,
                 state=state,
-                large_image="trakt_logo",
-                large_text="Watching on Trakt.tv",
+                large_image=large_image,
+                large_text=f"Watching on Trakt.tv",
+                small_image=small_image,
+                small_text="Trakt.tv",
                 start=start_time
             )
             return True
@@ -210,7 +334,7 @@ def main():
     if not authenticate_trakt():
         return
 
-    # Initial Discord connection attempt
+    # Initial Discord connection attempt  
     rpc_client, connected = connect_to_discord()
     if not connected:
         print("Warning: Could not connect to Discord initially. Will keep trying...")
