@@ -4,8 +4,6 @@
 
 This bot connects your [Trakt.tv](https://trakt.tv) account to Discord, displaying your current TV shows and movies as a "Watching" activity in your Discord profile.
 
-![Discord Example](https://via.placeholder.com/400x150/5865F2/ffffff?text=Watching+Shark+Tank%0AS16E2+-+Episode+2)
-
 ## ✨ Features
 
 - 🎭 **Proper "WATCHING" status** - Shows as "Watching [Show]" not "Playing [Show]"
@@ -46,17 +44,17 @@ This bot connects your [Trakt.tv](https://trakt.tv) account to Discord, displayi
    - **Name:** `Discord Presence` (or any name you like)
    - **Description:** `Shows my Trakt activity in Discord`
    - **Redirect URI:** `urn:ietf:wg:oauth:2.0:oob`
-   - **Permissions:** Check **all boxes** (Scrobble, etc.)
+   - **Permissions:** None needed
 
 3. **Save your credentials:**
    - After creating, you'll see:
-     - **Client ID** - Copy this 64-character code
-     - **Client Secret** - Copy this (keep it secret!)
-   - **Click on your app name** to see the **Application ID** (different from Client ID!)
+     - **Client ID** - Copy this code
+     - **Client Secret** - Copy this (keep it secret!  keep it safe!)
+   - **Click on your app name** to see the **Application ID** (different from Client ID!).  Easiest way is to read the ID from the end of the URL.
 
 ### Step 3: Discord App (Optional - Default Provided)
 
-**Good news!** This project includes a default Discord app called **"TV with Trakt"** that you can use immediately. 
+**Good news!** This project includes a default Discord app called **"TV with Trakt"** that you can use immediately.
 
 **Option A: Use the default app (recommended for beginners)**
 - Skip this step! The default Discord Client ID is already in `.env.example`
@@ -86,7 +84,7 @@ This bot connects your [Trakt.tv](https://trakt.tv) account to Discord, displayi
 2. **Edit the `.env` file** with your Trakt credentials:
    ```
    TRAKT_CLIENT_ID=your_trakt_client_id_here
-   TRAKT_CLIENT_SECRET=your_trakt_client_secret_here  
+   TRAKT_CLIENT_SECRET=your_trakt_client_secret_here
    TRAKT_APPLICATION_ID=your_trakt_application_id_here
    DISCORD_CLIENT_ID=1387827471822622850  # Default app (or use your own)
    ```
@@ -137,7 +135,7 @@ This bot connects your [Trakt.tv](https://trakt.tv) account to Discord, displayi
 - ✅ Restart Discord completely
 - ✅ Try running the bot as administrator (Windows)
 
-### "Authentication failed" 
+### "Authentication failed"
 - ✅ Double-check your Trakt credentials in `.env`
 - ✅ Make sure you copied the **Application ID** (not just Client ID)
 - ✅ Verify redirect URI is exactly: `urn:ietf:wg:oauth:2.0:oob`
@@ -185,7 +183,7 @@ time.sleep(15)  # Change 15 to your preferred seconds
 ```
 discord-presence/
 ├── main.py              # Main application
-├── discord_ipc.py       # Custom Discord integration  
+├── discord_ipc.py       # Custom Discord integration
 ├── requirements.txt     # Python dependencies
 ├── .env.example         # Configuration template
 ├── .env                 # Your credentials (keep private!)
@@ -194,7 +192,7 @@ discord-presence/
 
 ## 🤝 Contributing
 
-Found a bug or want to add a feature? 
+Found a bug or want to add a feature?
 
 1. **Fork this repository**
 2. **Create a feature branch:** `git checkout -b my-new-feature`
@@ -213,7 +211,7 @@ This project is open source. Feel free to use, modify, and distribute!
 
 ## 🆘 Support
 
-Having issues? 
+Having issues?
 
 1. **Check the troubleshooting section above**
 2. **Search existing GitHub issues**
