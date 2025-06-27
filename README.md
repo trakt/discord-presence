@@ -152,23 +152,47 @@ This bot connects your [Trakt.tv](https://trakt.tv) account to Discord, displayi
 
 ## 🔧 Advanced Configuration
 
-### Running in Background
+### Running as a Daemon (Background Service)
 
-**Windows (Task Scheduler):**
+**Cross-Platform - Automatic Installation:**
+
+This project includes scripts to easily install the app as a daemon that starts automatically on login. The installer automatically detects your operating system:
+
+```bash
+# Install as daemon (runs automatically on login)
+./scripts/install.sh
+
+# Check daemon status and logs  
+./scripts/status.sh
+
+# Uninstall daemon (keeps project files)
+./scripts/uninstall.sh
+```
+
+**Platform Support:**
+- ✅ **macOS** - Uses LaunchAgents for proper user-level daemon management
+- 🚧 **Windows** - Coming soon (Task Scheduler + PowerShell)  
+- 🚧 **Linux** - Coming soon (systemd user services)
+
+**What the macOS daemon installer does:**
+- ✅ Creates and activates Python virtual environment
+- ✅ Installs all dependencies automatically
+- ✅ Sets up macOS LaunchAgent for auto-start on login
+- ✅ Creates log files for monitoring
+- ✅ Handles automatic restarts if the app crashes
+- ✅ Runs in background without terminal window
+
+**Manual Installation Examples:**
+
+*Windows (Task Scheduler):*
 1. Open Task Scheduler
 2. Create Basic Task → Daily → Start at computer startup
 3. Action: Start a program → Point to your Python installation and script
 
-**macOS (launchd):**
+*Linux (systemd):*
 ```bash
-# Create a plist file for automatic startup
-# See: https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html
-```
-
-**Linux (systemd):**
-```bash
-# Create a systemd service
-sudo nano /etc/systemd/system/trakt-discord.service
+# Create a systemd user service
+systemctl --user enable trakt-discord-presence.service
 ```
 
 ### Custom Polling Interval
@@ -182,12 +206,29 @@ time.sleep(15)  # Change 15 to your preferred seconds
 
 ```
 discord-presence/
-├── main.py              # Main application
-├── discord_ipc.py       # Custom Discord integration
-├── requirements.txt     # Python dependencies
-├── .env.example         # Configuration template
-├── .env                 # Your credentials (keep private!)
-└── README.md           # This file
+├── main.py                                    # Main application
+├── discord_ipc.py                            # Custom Discord integration
+├── requirements.txt                           # Python dependencies
+├── .env.example                               # Configuration template
+├── .env                                       # Your credentials (keep private!)
+├── scripts/                                   # Cross-platform daemon scripts
+│   ├── install.sh                            # Universal installer (detects OS)
+│   ├── status.sh                             # Universal status checker  
+│   ├── uninstall.sh                          # Universal uninstaller
+│   ├── macos/                                # macOS-specific files
+│   │   ├── install.sh                        # macOS daemon installer
+│   │   ├── uninstall.sh                      # macOS daemon uninstaller
+│   │   ├── status.sh                         # macOS status checker
+│   │   ├── com.user.trakt-discord-presence.plist  # LaunchAgent template
+│   │   └── README.md                         # macOS documentation
+│   ├── windows/                              # Windows-specific files (coming soon)
+│   │   └── README.md                         # Windows documentation
+│   └── linux/                                # Linux-specific files (coming soon)
+│       └── README.md                         # Linux documentation
+├── logs/                                      # Daemon log files (created by installer)
+│   ├── trakt-discord.log                     # Application output
+│   └── trakt-discord-error.log               # Error messages
+└── README.md                                  # This file
 ```
 
 ## 🤝 Contributing
