@@ -89,68 +89,115 @@ def authenticate_trakt():
 def get_watching_status():
     """
     Fetches the current watching status from Trakt.tv.
-    Returns the watching object or None.
+    Uses User('me').watching to get live check-in status.
+    Returns the currently watching episode/movie or None.
     """
     try:
-        # Use get_playback to get current watching status
-        from trakt.sync import get_playback
-        playback_entries = get_playback()
+        from trakt.users import User
         
-        # get_playback returns a list, we want the most recent entry
-        if playback_entries and len(playback_entries) > 0:
-            return playback_entries[0]  # Most recent playback
+        # Get the current user and check what they're watching
+        user_me = User('me')
+        watching = user_me.watching
+        
+        if watching:
+            print(f"Currently watching: {watching}")
+            return watching
         else:
+            print("Not currently checked in to anything")
             return None
             
     except Exception as e:
         print(f"Error getting watching status: {e}")
         return None
 
-def update_discord_presence(rpc, playback_entry):
+def connect_to_discord():
     """
-    Updates the Discord Rich Presence based on the current Trakt.tv playback status.
+    Establishes connection to Discord Rich Presence.
+    Returns (rpc_client, success_bool)
     """
-    if playback_entry and hasattr(playback_entry, 'media'):
+    try:
+        rpc = Presence(DISCORD_CLIENT_ID)
+        rpc.connect()
+        print("Connected to Discord Rich Presence.")
+        return rpc, True
+    except Exception as e:
+        print(f"Could not connect to Discord: {e}")
+        return None, False
+
+def update_discord_presence_with_reconnect(rpc_container, watching_item):
+    """
+    Updates Discord Rich Presence with automatic reconnection handling.
+    rpc_container is a list containing [rpc_client] so we can modify it.
+    """
+    if not rpc_container[0]:
+        # No connection, try to reconnect
+        print("No Discord connection, attempting to reconnect...")
+        rpc_container[0], connected = connect_to_discord()
+        if not connected:
+            return False
+    
+    if watching_item:
         details = ""
         state = ""
 
         # Use current time as a placeholder for the start time
         start_time = int(time.time())
 
-        # PlaybackEntry has media attribute that contains movie or episode info
-        media = playback_entry.media
-        
-        if hasattr(media, 'title') and not hasattr(media, 'show'):
-            # This is a movie
-            details = f"Watching {media.title}"
-            if hasattr(media, 'year'):
-                state = f"({media.year})"
-        elif hasattr(media, 'show'):
-            # This is an episode
-            show = media.show
-            details = f"Watching {show.title}"
-            if hasattr(media, 'season') and hasattr(media, 'number'):
-                state = f"S{media.season:02d}E{media.number:02d}"
-                if hasattr(media, 'title'):
-                    state += f" - {media.title}"
+        # Check if it's a TV episode or movie based on attributes
+        if hasattr(watching_item, 'show') and watching_item.show:
+            # This is a TV episode
+            show_title = watching_item.show.title() if callable(watching_item.show.title) else watching_item.show.title
+            details = f"Watching {show_title}"
+            
+            season = getattr(watching_item, 'season', '?')
+            number = getattr(watching_item, 'number', '?')
+            episode_title = getattr(watching_item, 'title', 'Unknown Episode')
+            
+            state = f"S{season:02d}E{number:02d} - {episode_title}"
+                
+        elif hasattr(watching_item, 'title'):
+            # This is likely a movie
+            details = f"Watching {watching_item.title}"
+            if hasattr(watching_item, 'year') and watching_item.year:
+                state = f"({watching_item.year})"
 
         print(f"Updating Discord: {details} - {state}")
         try:
-            rpc.update(
+            rpc_container[0].update(
                 details=details,
                 state=state,
                 large_image="trakt_logo",
                 large_text="Watching on Trakt.tv",
                 start=start_time
             )
+            return True
         except Exception as e:
             print(f"Failed to update Discord presence: {e}")
+            # Check if it's a connection error
+            if "pipe was closed" in str(e).lower() or "broken pipe" in str(e).lower() or "connection" in str(e).lower():
+                print("Discord connection lost, will attempt to reconnect on next update...")
+                try:
+                    rpc_container[0].close()
+                except:
+                    pass
+                rpc_container[0] = None
+            return False
     else:
         print("Not watching anything. Clearing Discord presence.")
         try:
-            rpc.clear()
+            rpc_container[0].clear()
+            return True
         except Exception as e:
             print(f"Failed to clear Discord presence: {e}")
+            # Check if it's a connection error
+            if "pipe was closed" in str(e).lower() or "broken pipe" in str(e).lower() or "connection" in str(e).lower():
+                print("Discord connection lost, will attempt to reconnect on next update...")
+                try:
+                    rpc_container[0].close()
+                except:
+                    pass
+                rpc_container[0] = None
+            return False
 
 def main():
     """
@@ -163,25 +210,47 @@ def main():
     if not authenticate_trakt():
         return
 
-    try:
-        rpc = Presence(DISCORD_CLIENT_ID)
-        rpc.connect()
-        print("Connected to Discord Rich Presence.")
-    except Exception as e:
-        print(f"Could not connect to Discord: {e}")
-        print("Please ensure Discord is running and the Discord Client ID is correct.")
-        return
+    # Initial Discord connection attempt
+    rpc_client, connected = connect_to_discord()
+    if not connected:
+        print("Warning: Could not connect to Discord initially. Will keep trying...")
+    
+    # Use a list container so we can modify the connection from within functions
+    rpc_container = [rpc_client]
 
     try:
+        print("Starting monitoring loop...")
+        consecutive_failures = 0
+        
         while True:
-            playback_status = get_watching_status()
-            update_discord_presence(rpc, playback_status)
+            watching_status = get_watching_status()
+            success = update_discord_presence_with_reconnect(rpc_container, watching_status)
+            
+            if success:
+                consecutive_failures = 0
+            else:
+                consecutive_failures += 1
+                if consecutive_failures >= 3:
+                    print("Multiple Discord connection failures. Discord may not be running.")
+                    print("Will continue trying to reconnect...")
+                    # Add a longer delay after multiple failures
+                    time.sleep(30)
+                    consecutive_failures = 0
+                    continue
+            
             # Check for new status every 15 seconds
             time.sleep(15)
+            
     except KeyboardInterrupt:
         print("\nExiting...")
     finally:
-        rpc.close()
+        # Clean up Discord connection if it exists
+        if rpc_container[0]:
+            try:
+                rpc_container[0].close()
+                print("Discord connection closed.")
+            except:
+                pass
 
 if __name__ == "__main__":
     main()
