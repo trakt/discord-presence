@@ -1,0 +1,3 @@
+pypresence
+pytrakt
+python-dotenv
