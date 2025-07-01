@@ -1,5 +1,9 @@
 import time
 import os
+import sys
+import signal
+import logging
+from pathlib import Path
 
 from discord_ipc import DiscordIPC  # Use our custom IPC implementation
 import trakt
@@ -13,6 +17,52 @@ TRAKT_CLIENT_ID = os.getenv("TRAKT_CLIENT_ID")
 TRAKT_CLIENT_SECRET = os.getenv("TRAKT_CLIENT_SECRET")
 TRAKT_APPLICATION_ID = os.getenv("TRAKT_APPLICATION_ID")
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
+
+# Daemon mode configuration
+DAEMON_MODE = "--daemon" in sys.argv or os.getenv("DAEMON_MODE") == "1"
+LOG_FILE = Path(__file__).parent / "trakt-discord.log"
+
+# --- Logging Setup ---
+def setup_logging():
+    """Setup logging for daemon or interactive mode."""
+    log_level = logging.INFO
+    log_format = '%(asctime)s - %(levelname)s - %(message)s'
+    
+    if DAEMON_MODE:
+        # File logging for daemon mode
+        logging.basicConfig(
+            level=log_level,
+            format=log_format,
+            handlers=[
+                logging.FileHandler(LOG_FILE),
+                logging.StreamHandler()  # Still log to stdout for systemd
+            ]
+        )
+    else:
+        # Console logging for interactive mode
+        logging.basicConfig(
+            level=log_level,
+            format=log_format,
+            handlers=[logging.StreamHandler()]
+        )
+    
+    return logging.getLogger(__name__)
+
+logger = setup_logging()
+
+# --- Signal Handlers ---
+shutdown_requested = False
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully."""
+    global shutdown_requested
+    signal_name = signal.Signals(signum).name
+    logger.info(f"Received {signal_name} signal, shutting down gracefully...")
+    shutdown_requested = True
+
+# Register signal handlers
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
 # --- End Configuration ---
 
 def load_stored_tokens():
@@ -58,6 +108,7 @@ def authenticate_trakt():
     Handles Trakt.tv authentication with automatic token loading and PIN fallback.
     """
     print("Authenticating with Trakt.tv...")
+    logger.info("Authenticating with Trakt.tv...")
 
     # Set the application ID first
     trakt.core.APPLICATION_ID = TRAKT_APPLICATION_ID
@@ -356,4 +407,5 @@ def main():
                 pass
 
 if __name__ == "__main__":
-    main()
+    exit_code = main()
+    sys.exit(exit_code if exit_code is not None else 0)

@@ -93,21 +93,34 @@ This bot connects your [Trakt.tv](https://trakt.tv) account to Discord, displayi
 
 ### Step 5: Run the Bot
 
-1. **Start the bot:**
-   ```bash
-   python main.py
-   ```
+**Option A: Quick Test (Recommended First)**
+```bash
+python main.py
+```
 
-2. **First-time setup:**
-   - The bot will open a browser for Trakt.tv authentication
-   - **Log in to Trakt.tv** and **authorize the app**
-   - Copy the PIN code back to the terminal
-   - Your credentials will be saved for future use
+**Option B: Install as Daemon (Linux - Runs Automatically)**
+```bash
+# Install and enable automatic startup
+python install.py install
 
-3. **Check Discord:**
-   - Make sure Discord is running
-   - Start watching something on Trakt.tv (check-in to a show/movie)
-   - Your Discord status should update automatically!
+# Management commands
+python install.py start    # Start the daemon
+python install.py stop     # Stop the daemon  
+python install.py status   # Check if running
+python install.py logs     # View logs
+python install.py uninstall # Remove daemon
+```
+
+**First-time setup (both options):**
+- The bot will open a browser for Trakt.tv authentication
+- **Log in to Trakt.tv** and **authorize the app**
+- Copy the PIN code back to the terminal
+- Your credentials will be saved for future use
+
+**Check Discord:**
+- Make sure Discord is running
+- Start watching something on Trakt.tv (check-in to a show/movie)
+- Your Discord status should update automatically!
 
 ## 📱 How to Use
 
@@ -128,7 +141,49 @@ This bot connects your [Trakt.tv](https://trakt.tv) account to Discord, displayi
    Started watching 5 minutes ago
 ```
 
+## 🤖 Daemon Mode (Linux)
+
+The bot can run as a system daemon that automatically starts on boot and runs in the background.
+
+### **Quick Daemon Setup:**
+```bash
+# Test your configuration first
+python install.py test
+
+# Install and enable daemon
+python install.py install
+
+# Check if it's running
+python install.py status
+```
+
+### **Daemon Features:**
+- ✅ **Auto-start on login** - No need to manually start
+- ✅ **Background operation** - Runs silently in background
+- ✅ **Automatic restart** - Restarts if it crashes
+- ✅ **System integration** - Uses systemd for proper service management
+- ✅ **Log management** - Logs to system journal
+
+### **Daemon Management:**
+```bash
+python install.py start     # Start the daemon
+python install.py stop      # Stop the daemon
+python install.py restart   # Restart the daemon
+python install.py status    # Show current status
+python install.py logs      # View recent logs (Ctrl+C to exit)
+python install.py uninstall # Remove daemon completely
+```
+
+### **Platform Support:**
+- ✅ **Linux** - Full systemd integration
+- ⚠️ **macOS** - Manual setup (instructions provided)
+- ⚠️ **Windows** - Manual setup (instructions provided)
+
+*Daemon support for macOS and Windows is planned for future releases.*
+
 ## 🛠️ Troubleshooting
+
+### **General Issues**
 
 ### "Could not connect to Discord"
 - ✅ Make sure Discord Desktop app is running (not just web browser)
@@ -149,6 +204,23 @@ This bot connects your [Trakt.tv](https://trakt.tv) account to Discord, displayi
 - ✅ Make sure your Discord app is named "TV with Trakt"
 - ✅ Restart Discord to clear cache
 - ✅ Wait a few minutes for Discord to update
+
+### **Daemon Issues**
+
+**"systemctl not found" or "systemd not available"**
+- ✅ You're not on a systemd Linux distribution
+- ✅ Run manually: `python main.py --daemon`
+- ✅ Use your distribution's service manager (upstart, OpenRC, etc.)
+
+**Daemon installed but not starting**
+- ✅ Check logs: `python install.py logs`
+- ✅ Verify configuration: `python install.py test`
+- ✅ Check if Discord is running: `ps aux | grep -i discord`
+
+**Daemon running but Discord not updating**
+- ✅ Make sure you're logged into the same user account where Discord runs
+- ✅ Check if you're checked into something on Trakt.tv
+- ✅ View daemon logs: `journalctl --user -u trakt-discord-presence -f`
 
 ## 🔧 Advanced Configuration
 
