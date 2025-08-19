@@ -25,7 +25,7 @@ This bot connects your [Trakt.tv](https://trakt.tv) account to Discord, displayi
 
 1. **Download this project:**
    ```bash
-   git clone <your-repository-url>
+   git clone git@github.com:trakt/discord-presence.git
    cd discord-presence
    ```
 
