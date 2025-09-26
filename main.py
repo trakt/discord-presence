@@ -800,10 +800,17 @@ def main():
         # Clean up Discord connection if it exists
         if rpc_container[0]:
             try:
-                rpc_container[0].close()
-                logger.debug("Discord connection closed.")
-            except:
-                pass
+                rpc_container[0].clear()
+                _reset_activity_state()
+                logger.debug("Discord presence cleared on shutdown.")
+            except Exception as clear_err:
+                logger.debug("Failed to clear Discord presence during shutdown: %s", clear_err)
+            finally:
+                try:
+                    rpc_container[0].close()
+                    logger.debug("Discord connection closed.")
+                except Exception as close_err:
+                    logger.debug("Error while closing Discord connection: %s", close_err)
 
 if __name__ == "__main__":
     exit_code = main()
