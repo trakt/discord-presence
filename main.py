@@ -3,6 +3,7 @@ import os
 import sys
 import signal
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 from discord_ipc import DiscordIPC  # Use our custom IPC implementation
@@ -21,6 +22,12 @@ DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
 # Daemon mode configuration
 DAEMON_MODE = "--daemon" in sys.argv or os.getenv("DAEMON_MODE") == "1"
 LOG_FILE = Path(__file__).parent / "trakt-discord.log"
+
+CURRENT_ACTIVITY_STATE = {
+    "item_key": None,
+    "start_timestamp": None,
+    "raw_started_at": None,
+}
 
 # --- Logging Setup ---
 def setup_logging():
@@ -253,6 +260,168 @@ def extract_image_url(image_data):
         print(f"Error extracting image URL: {e}")
         return None
 
+
+def _normalize_timestamp(value):
+    """Return a Unix timestamp (seconds) parsed from various value shapes."""
+    if value is None:
+        return None
+
+    if isinstance(value, (int, float)):
+        return int(value)
+
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str):
+        candidate = value.strip()
+        if candidate.endswith("Z"):
+            candidate = candidate[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(candidate)
+        except ValueError:
+            for fmt in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S%z"):
+                try:
+                    dt = datetime.strptime(candidate, fmt)
+                    break
+                except ValueError:
+                    continue
+            else:
+                return None
+    else:
+        return None
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+
+    return int(dt.timestamp())
+
+
+def _estimate_start_from_progress(watching_item):
+    """Estimate start timestamp and report progress percentage if possible."""
+    try:
+        progress = getattr(watching_item, "progress", None)
+        progress = float(progress) if progress is not None else None
+    except (TypeError, ValueError):
+        progress = None
+
+    if not progress or progress <= 0:
+        return None
+
+    runtime = getattr(watching_item, "runtime", None)
+
+    if runtime is None and hasattr(watching_item, "show") and watching_item.show:
+        runtime = getattr(watching_item.show, "runtime", None)
+
+    try:
+        runtime = float(runtime) if runtime is not None else None
+    except (TypeError, ValueError):
+        runtime = None
+
+    if not runtime or runtime <= 0:
+        return None
+
+    # Trakt runtimes are expressed in minutes; convert to seconds
+    seconds_elapsed = int(runtime * 60 * (progress / 100.0))
+    if seconds_elapsed < 0:
+        return None
+
+    start_timestamp = max(int(time.time()) - seconds_elapsed, 0)
+    return start_timestamp, progress
+
+
+def _build_activity_key(watching_item):
+    """Construct a stable identifier for the currently playing item."""
+    if not watching_item:
+        return None
+
+    ids = getattr(watching_item, "ids", None)
+    trakt_id = None
+
+    if isinstance(ids, dict):
+        trakt_id = ids.get("trakt") or ids.get("slug") or ids.get("imdb")
+    elif ids is not None:
+        trakt_id = getattr(ids, "trakt", None) or getattr(ids, "slug", None) or getattr(ids, "imdb", None)
+
+    if trakt_id:
+        prefix = "episode" if hasattr(watching_item, "show") and watching_item.show else "movie"
+        return f"{prefix}:{trakt_id}"
+
+    if hasattr(watching_item, "show") and watching_item.show:
+        show_obj = watching_item.show
+        show_title = None
+        if callable(getattr(show_obj, "title", None)):
+            try:
+                show_title = show_obj.title()
+            except Exception:
+                show_title = None
+        if show_title is None:
+            show_title = getattr(show_obj, "title", None)
+        season = getattr(watching_item, "season", "?")
+        number = getattr(watching_item, "number", "?")
+        return f"episode:{show_title}:{season}:{number}"
+
+    title = getattr(watching_item, "title", None)
+    year = getattr(watching_item, "year", None)
+    if title:
+        return f"movie:{title}:{year}"
+
+    return str(watching_item)
+
+
+def _resolve_activity_start(watching_item, item_key):
+    """Determine the correct start timestamp for Discord presence updates."""
+    candidate_attrs = ("started_at", "watched_at", "last_watched_at")
+    start_timestamp = None
+    raw_source = None
+
+    estimate = _estimate_start_from_progress(watching_item)
+    if estimate is not None:
+        start_timestamp, progress_value = estimate
+        raw_source = ("progress", progress_value)
+
+    if start_timestamp is None:
+        for attr in candidate_attrs:
+            value = getattr(watching_item, attr, None)
+            ts = _normalize_timestamp(value)
+            if ts is not None:
+                start_timestamp = ts
+                raw_source = (attr, value)
+                break
+
+    # If we have progress data we always prefer that so Discord reflects position
+    if raw_source and raw_source[0] == "progress":
+        CURRENT_ACTIVITY_STATE.update(
+            item_key=item_key,
+            start_timestamp=start_timestamp,
+            raw_started_at=raw_source,
+        )
+        return start_timestamp
+
+    previous_state_matches = (
+        CURRENT_ACTIVITY_STATE["item_key"] == item_key
+        and CURRENT_ACTIVITY_STATE["start_timestamp"] is not None
+    )
+
+    if previous_state_matches:
+        previous_raw = CURRENT_ACTIVITY_STATE.get("raw_started_at")
+        if raw_source is None or raw_source == previous_raw:
+            return CURRENT_ACTIVITY_STATE["start_timestamp"]
+
+    if start_timestamp is None:
+        start_timestamp = int(time.time())
+
+    CURRENT_ACTIVITY_STATE.update(
+        item_key=item_key,
+        start_timestamp=start_timestamp,
+        raw_started_at=raw_source,
+    )
+
+    return start_timestamp
+
+
+def _reset_activity_state():
+    """Clear the cached activity information when nothing is playing."""
+    CURRENT_ACTIVITY_STATE.update(item_key=None, start_timestamp=None, raw_started_at=None)
+
 def connect_to_discord():
     """
     Attempts to connect to Discord Rich Presence using custom IPC.
@@ -285,8 +454,8 @@ def update_discord_presence_with_reconnect(rpc_container, watching_item):
         details = ""
         state = ""
 
-        # Use current time as start time
-        start_time = int(time.time())
+        item_key = _build_activity_key(watching_item)
+        start_time = _resolve_activity_start(watching_item, item_key)
 
         # Get poster artwork
         poster_url = get_poster_url(watching_item)
@@ -339,6 +508,7 @@ def update_discord_presence_with_reconnect(rpc_container, watching_item):
             return False
     else:
         print("Not watching anything. Clearing Discord presence.")
+        _reset_activity_state()
         try:
             rpc_container[0].clear()
             return True
