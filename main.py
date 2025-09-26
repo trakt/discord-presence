@@ -1,3 +1,4 @@
+import json
 import time
 import os
 import sys
@@ -21,7 +22,11 @@ DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
 
 # Daemon mode configuration
 DAEMON_MODE = "--daemon" in sys.argv or os.getenv("DAEMON_MODE") == "1"
-LOG_FILE = Path(__file__).parent / "trakt-discord.log"
+BASE_DIR = Path(__file__).parent
+LOG_FILE = BASE_DIR / "trakt-discord.log"
+LOCAL_TOKEN_FILE = BASE_DIR / ".pytrakt.json"
+HOME_TOKEN_FILE = Path.home() / ".pytrakt.json"
+TOKEN_FILES = (LOCAL_TOKEN_FILE, HOME_TOKEN_FILE)
 
 CURRENT_ACTIVITY_STATE = {
     "item_key": None,
@@ -66,49 +71,115 @@ def signal_handler(signum, frame):
     signal_name = signal.Signals(signum).name
     logger.info(f"Received {signal_name} signal, shutting down gracefully...")
     shutdown_requested = True
+    # Raising KeyboardInterrupt lets us break out of blocking calls (e.g. input())
+    raise KeyboardInterrupt
 
 # Register signal handlers
 signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 # --- End Configuration ---
 
+def _apply_trakt_tokens(token_data):
+    """Push token data into trakt.core globals."""
+    trakt.core.CLIENT_ID = token_data.get('CLIENT_ID')
+    trakt.core.CLIENT_SECRET = token_data.get('CLIENT_SECRET')
+    trakt.core.OAUTH_TOKEN = token_data.get('OAUTH_TOKEN')
+    trakt.core.OAUTH_REFRESH = token_data.get('OAUTH_REFRESH')
+    trakt.core.OAUTH_EXPIRES_AT = token_data.get('OAUTH_EXPIRES_AT')
+    if token_data.get('APPLICATION_ID'):
+        trakt.core.APPLICATION_ID = token_data['APPLICATION_ID']
+
+
+def _persist_token_data(token_data):
+    """Persist the provided token data to all known token files."""
+    serialized = json.dumps(token_data)
+    for path in TOKEN_FILES:
+        try:
+            path.write_text(serialized)
+        except Exception as err:
+            logger.debug(f"Unable to write token file {path}: {err}")
+
+
+def persist_current_tokens():
+    """Capture the active trakt.core tokens and persist them to disk."""
+    token_data = {
+        'APPLICATION_ID': getattr(trakt.core, 'APPLICATION_ID', TRAKT_APPLICATION_ID),
+        'CLIENT_ID': getattr(trakt.core, 'CLIENT_ID', TRAKT_CLIENT_ID),
+        'CLIENT_SECRET': getattr(trakt.core, 'CLIENT_SECRET', TRAKT_CLIENT_SECRET),
+        'OAUTH_TOKEN': getattr(trakt.core, 'OAUTH_TOKEN', None),
+        'OAUTH_REFRESH': getattr(trakt.core, 'OAUTH_REFRESH', None),
+        'OAUTH_EXPIRES_AT': getattr(trakt.core, 'OAUTH_EXPIRES_AT', None),
+    }
+
+    if not token_data['OAUTH_TOKEN']:
+        return
+
+    expires_ts = _normalize_timestamp(token_data['OAUTH_EXPIRES_AT'])
+    token_data['OAUTH_EXPIRES_AT'] = expires_ts
+    _persist_token_data(token_data)
+
+
 def load_stored_tokens():
-    """
-    Load and set tokens directly from .pytrakt.json if they exist and are valid.
-    Returns True if successful, False otherwise.
-    """
-    try:
-        import json
-        if not os.path.exists(".pytrakt.json"):
-            return False
+    """Load tokens from disk (local or home) and apply the freshest valid set."""
+    candidates = []
 
-        with open(".pytrakt.json", 'r') as f:
-            token_data = json.load(f)
+    for path in TOKEN_FILES:
+        if not path.exists():
+            continue
+        try:
+            with path.open('r') as f:
+                token_data = json.load(f)
+            if not isinstance(token_data, dict):
+                continue
+        except Exception as err:
+            logger.debug(f"Could not read token file {path}: {err}")
+            continue
 
-        required_keys = ['OAUTH_TOKEN', 'OAUTH_REFRESH', 'OAUTH_EXPIRES_AT', 'CLIENT_ID', 'CLIENT_SECRET']
-        if not all(key in token_data for key in required_keys):
-            return False
+        expires_raw = token_data.get('OAUTH_EXPIRES_AT')
+        expires_ts = _normalize_timestamp(expires_raw)
+        candidates.append({
+            'path': path,
+            'data': token_data,
+            'expires_ts': expires_ts,
+            'expires_raw': expires_raw,
+        })
 
-        # Check if token is expired (with 5 minute buffer)
-        expires_at = token_data['OAUTH_EXPIRES_AT']
-        current_time = int(time.time())
-        if current_time >= (expires_at - 300):  # 5 minute buffer
-            print("Stored tokens are expired")
-            return False
+    if not candidates:
+        return False
 
-        # Set tokens directly in trakt.core (this is how pytrakt actually works)
-        trakt.core.CLIENT_ID = token_data['CLIENT_ID']
-        trakt.core.CLIENT_SECRET = token_data['CLIENT_SECRET']
-        trakt.core.OAUTH_TOKEN = token_data['OAUTH_TOKEN']
-        trakt.core.OAUTH_REFRESH = token_data['OAUTH_REFRESH']
-        trakt.core.OAUTH_EXPIRES_AT = token_data['OAUTH_EXPIRES_AT']
+    now = int(time.time())
+    BUFFER = 300
 
+    # Sort by expiry (descending) so newest/longest-lived tokens come first
+    candidates.sort(key=lambda c: c['expires_ts'] or 0, reverse=True)
+
+    for candidate in candidates:
+        token_data = candidate['data']
+
+        if 'OAUTH_TOKEN' not in token_data or not token_data['OAUTH_TOKEN']:
+            continue
+
+        expires_ts = candidate['expires_ts']
+        if expires_ts is not None and now >= (expires_ts - BUFFER):
+            logger.info(f"Stored tokens in {candidate['path'].name} are expired")
+            continue
+
+        _apply_trakt_tokens(token_data)
         print("Loaded stored tokens successfully")
+
+        # Keep both token files in sync with the working copy
+        _persist_token_data({
+            'APPLICATION_ID': token_data.get('APPLICATION_ID', TRAKT_APPLICATION_ID),
+            'CLIENT_ID': token_data.get('CLIENT_ID'),
+            'CLIENT_SECRET': token_data.get('CLIENT_SECRET'),
+            'OAUTH_TOKEN': token_data.get('OAUTH_TOKEN'),
+            'OAUTH_REFRESH': token_data.get('OAUTH_REFRESH'),
+            'OAUTH_EXPIRES_AT': expires_ts if expires_ts is not None else token_data.get('OAUTH_EXPIRES_AT'),
+        })
+
         return True
 
-    except Exception as e:
-        print(f"Error loading stored tokens: {e}")
-        return False
+    return False
 
 def authenticate_trakt():
     """
@@ -137,6 +208,9 @@ def authenticate_trakt():
     try:
         print("Starting PIN authentication...")
         trakt.init(client_id=TRAKT_CLIENT_ID, client_secret=TRAKT_CLIENT_SECRET, store=True)
+        persist_current_tokens()
+        # Reload from disk once so we normalize timestamps and sync both token files
+        load_stored_tokens()
         print("PIN authentication successful!")
         return True
 
