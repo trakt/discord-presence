@@ -34,6 +34,16 @@ CURRENT_ACTIVITY_STATE = {
     "raw_started_at": None,
 }
 
+TOKEN_RUNTIME_STATE = {
+    "issued_at": None,
+    "expires_at": None,
+}
+
+# Default Trakt tokens currently expire after 7 days; use that as the fallback window.
+DEFAULT_TOKEN_LIFETIME_SECONDS = 7 * 24 * 60 * 60
+TOKEN_REFRESH_THRESHOLD = 0.8
+TOKEN_REFRESH_BUFFER_SECONDS = 300  # 5 minutes grace window
+
 # --- Logging Setup ---
 def setup_logging():
     """Setup logging for daemon or interactive mode."""
@@ -86,8 +96,29 @@ def _apply_trakt_tokens(token_data):
     trakt.core.OAUTH_TOKEN = token_data.get('OAUTH_TOKEN')
     trakt.core.OAUTH_REFRESH = token_data.get('OAUTH_REFRESH')
     trakt.core.OAUTH_EXPIRES_AT = token_data.get('OAUTH_EXPIRES_AT')
+    issued_at = token_data.get('OAUTH_ISSUED_AT')
+    if issued_at is not None:
+        setattr(trakt.core, 'OAUTH_ISSUED_AT', issued_at)
     if token_data.get('APPLICATION_ID'):
         trakt.core.APPLICATION_ID = token_data['APPLICATION_ID']
+
+    trakt.core.config().update(
+        APPLICATION_ID=token_data.get('APPLICATION_ID', TRAKT_APPLICATION_ID),
+        CLIENT_ID=token_data.get('CLIENT_ID'),
+        CLIENT_SECRET=token_data.get('CLIENT_SECRET'),
+        OAUTH_TOKEN=token_data.get('OAUTH_TOKEN'),
+        OAUTH_REFRESH=token_data.get('OAUTH_REFRESH'),
+        OAUTH_EXPIRES_AT=token_data.get('OAUTH_EXPIRES_AT'),
+    ).store()
+
+    _set_runtime_token_state(issued_at, token_data.get('OAUTH_EXPIRES_AT'))
+
+
+def _set_runtime_token_state(issued_at, expires_at):
+    if issued_at is not None:
+        TOKEN_RUNTIME_STATE['issued_at'] = issued_at
+    if expires_at is not None:
+        TOKEN_RUNTIME_STATE['expires_at'] = expires_at
 
 
 def _persist_token_data(token_data):
@@ -102,13 +133,16 @@ def _persist_token_data(token_data):
 
 def persist_current_tokens():
     """Capture the active trakt.core tokens and persist them to disk."""
+    config = trakt.core.config()
+    config.load()
+
     token_data = {
-        'APPLICATION_ID': getattr(trakt.core, 'APPLICATION_ID', TRAKT_APPLICATION_ID),
-        'CLIENT_ID': getattr(trakt.core, 'CLIENT_ID', TRAKT_CLIENT_ID),
-        'CLIENT_SECRET': getattr(trakt.core, 'CLIENT_SECRET', TRAKT_CLIENT_SECRET),
-        'OAUTH_TOKEN': getattr(trakt.core, 'OAUTH_TOKEN', None),
-        'OAUTH_REFRESH': getattr(trakt.core, 'OAUTH_REFRESH', None),
-        'OAUTH_EXPIRES_AT': getattr(trakt.core, 'OAUTH_EXPIRES_AT', None),
+        'APPLICATION_ID': config.get('APPLICATION_ID', TRAKT_APPLICATION_ID),
+        'CLIENT_ID': config.get('CLIENT_ID') or TRAKT_CLIENT_ID,
+        'CLIENT_SECRET': config.get('CLIENT_SECRET') or TRAKT_CLIENT_SECRET,
+        'OAUTH_TOKEN': config.get('OAUTH_TOKEN'),
+        'OAUTH_REFRESH': config.get('OAUTH_REFRESH'),
+        'OAUTH_EXPIRES_AT': config.get('OAUTH_EXPIRES_AT'),
     }
 
     if not token_data['OAUTH_TOKEN']:
@@ -116,6 +150,14 @@ def persist_current_tokens():
 
     expires_ts = _normalize_timestamp(token_data['OAUTH_EXPIRES_AT'])
     token_data['OAUTH_EXPIRES_AT'] = expires_ts
+
+    issued_ts = _normalize_timestamp(getattr(trakt.core, 'OAUTH_ISSUED_AT', None))
+    if issued_ts is None:
+        issued_ts = int(time.time()) if expires_ts is not None else None
+    if issued_ts is not None:
+        token_data['OAUTH_ISSUED_AT'] = issued_ts
+
+    _apply_trakt_tokens(token_data)
     _persist_token_data(token_data)
 
 
@@ -148,7 +190,6 @@ def load_stored_tokens():
         return False
 
     now = int(time.time())
-    BUFFER = 300
 
     # Sort by expiry (descending) so newest/longest-lived tokens come first
     candidates.sort(key=lambda c: c['expires_ts'] or 0, reverse=True)
@@ -156,30 +197,94 @@ def load_stored_tokens():
     for candidate in candidates:
         token_data = candidate['data']
 
-        if 'OAUTH_TOKEN' not in token_data or not token_data['OAUTH_TOKEN']:
+        if not token_data.get('OAUTH_TOKEN'):
             continue
 
         expires_ts = candidate['expires_ts']
-        if expires_ts is not None and now >= (expires_ts - BUFFER):
+        issued_ts = _resolve_issued_at(token_data, expires_ts)
+        token_data['OAUTH_EXPIRES_AT'] = expires_ts
+        if issued_ts is not None:
+            token_data['OAUTH_ISSUED_AT'] = issued_ts
+
+        _apply_trakt_tokens(token_data)
+
+        should_refresh = False
+        if expires_ts is None:
+            should_refresh = False
+        else:
+            remaining = expires_ts - now
+            lifetime = expires_ts - issued_ts if issued_ts is not None else DEFAULT_TOKEN_LIFETIME_SECONDS
+            if lifetime <= 0:
+                lifetime = DEFAULT_TOKEN_LIFETIME_SECONDS
+            progress = (lifetime - max(remaining, 0)) / float(lifetime)
+            if remaining <= TOKEN_REFRESH_BUFFER_SECONDS or progress >= TOKEN_REFRESH_THRESHOLD:
+                should_refresh = True
+
+        if should_refresh and token_data.get('OAUTH_REFRESH'):
+            logger.info("Stored tokens nearing expiry, attempting proactive refresh...")
+            if maybe_refresh_tokens(force=True):
+                print("Loaded stored tokens successfully")
+                return True
+            logger.warning("Automatic refresh attempt failed, will fall back to next credential")
+            continue
+
+        if expires_ts is not None and expires_ts - now <= 0:
             logger.info(f"Stored tokens in {candidate['path'].name} are expired")
             continue
 
-        _apply_trakt_tokens(token_data)
         print("Loaded stored tokens successfully")
-
-        # Keep both token files in sync with the working copy
-        _persist_token_data({
-            'APPLICATION_ID': token_data.get('APPLICATION_ID', TRAKT_APPLICATION_ID),
-            'CLIENT_ID': token_data.get('CLIENT_ID'),
-            'CLIENT_SECRET': token_data.get('CLIENT_SECRET'),
-            'OAUTH_TOKEN': token_data.get('OAUTH_TOKEN'),
-            'OAUTH_REFRESH': token_data.get('OAUTH_REFRESH'),
-            'OAUTH_EXPIRES_AT': expires_ts if expires_ts is not None else token_data.get('OAUTH_EXPIRES_AT'),
-        })
-
+        _persist_token_data(token_data)
         return True
 
     return False
+
+
+def maybe_refresh_tokens(force=False):
+    """Refresh the Trakt token if it is close to expiring."""
+    expires_at = TOKEN_RUNTIME_STATE.get('expires_at')
+    issued_at = TOKEN_RUNTIME_STATE.get('issued_at')
+
+    if expires_at is None:
+        expires_at = _normalize_timestamp(getattr(trakt.core, 'OAUTH_EXPIRES_AT', None))
+    if issued_at is None:
+        issued_at = _normalize_timestamp(getattr(trakt.core, 'OAUTH_ISSUED_AT', None))
+
+    now = int(time.time())
+    needs_refresh = force
+
+    if not needs_refresh and expires_at is not None:
+        lifetime = expires_at - issued_at if issued_at is not None else DEFAULT_TOKEN_LIFETIME_SECONDS
+        if lifetime <= 0:
+            lifetime = DEFAULT_TOKEN_LIFETIME_SECONDS
+        elapsed = now - (issued_at if issued_at is not None else expires_at - lifetime)
+        if elapsed < 0:
+            elapsed = 0
+        progress = elapsed / float(lifetime) if lifetime else 1.0
+        remaining = expires_at - now
+
+        if remaining <= TOKEN_REFRESH_BUFFER_SECONDS or progress >= TOKEN_REFRESH_THRESHOLD:
+            needs_refresh = True
+
+    if not needs_refresh and expires_at is not None and expires_at <= now:
+        needs_refresh = True
+
+    if not needs_refresh:
+        return False
+
+    token_auth = getattr(trakt.core.api(), 'auth', None)
+    if not token_auth or not hasattr(token_auth, 'refresh_token'):
+        logger.debug("Token auth refresh is unavailable")
+        return False
+
+    try:
+        token_auth.refresh_token()
+    except Exception as err:
+        logger.warning(f"Token refresh failed: {err}")
+        return False
+
+    persist_current_tokens()
+    logger.info("Token refresh succeeded and credentials persisted.")
+    return True
 
 def authenticate_trakt():
     """
@@ -367,6 +472,17 @@ def _normalize_timestamp(value):
         dt = dt.replace(tzinfo=timezone.utc)
 
     return int(dt.timestamp())
+
+
+def _resolve_issued_at(token_data, expires_ts):
+    issued_candidate = token_data.get('OAUTH_ISSUED_AT') or token_data.get('OAUTH_CREATED_AT')
+    issued_ts = _normalize_timestamp(issued_candidate)
+
+    if issued_ts is None and expires_ts is not None:
+        # Fall back to assuming the default Trakt token lifetime when issuance is unknown
+        issued_ts = expires_ts - DEFAULT_TOKEN_LIFETIME_SECONDS
+
+    return issued_ts
 
 
 def _estimate_start_from_progress(watching_item):
@@ -608,6 +724,9 @@ def main():
     if not authenticate_trakt():
         return
 
+    # Ensure freshly-loaded tokens are healthy before proceeding
+    maybe_refresh_tokens()
+
     # Initial Discord connection attempt
     rpc_client, connected = connect_to_discord()
     if not connected:
@@ -621,6 +740,7 @@ def main():
         consecutive_failures = 0
 
         while not shutdown_requested:
+            maybe_refresh_tokens()
             watching_status = get_watching_status()
             success = update_discord_presence_with_reconnect(rpc_container, watching_status)
 
