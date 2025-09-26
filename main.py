@@ -25,7 +25,9 @@ LOG_LEVEL_NAME = (os.getenv("LOG_LEVEL") or "INFO").strip()
 # Daemon mode configuration
 DAEMON_MODE = "--daemon" in sys.argv or os.getenv("DAEMON_MODE") == "1"
 BASE_DIR = Path(__file__).parent
-LOG_FILE = BASE_DIR / "trakt-discord.log"
+LOG_DIR = BASE_DIR / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+LOG_FILE = LOG_DIR / "trakt-discord.log"
 LOCAL_TOKEN_FILE = BASE_DIR / ".pytrakt.json"
 HOME_TOKEN_FILE = Path.home() / ".pytrakt.json"
 TOKEN_FILES = (LOCAL_TOKEN_FILE, HOME_TOKEN_FILE)
@@ -81,25 +83,20 @@ def setup_logging():
     """Setup logging for daemon or interactive mode."""
     log_level = _resolve_log_level(LOG_LEVEL_NAME)
     log_format = '%(asctime)s - %(levelname)s - %(message)s'
-    
-    if DAEMON_MODE:
-        # File logging for daemon mode
-        logging.basicConfig(
-            level=log_level,
-            format=log_format,
-            handlers=[
-                logging.FileHandler(LOG_FILE),
-                logging.StreamHandler()  # Still log to stdout for systemd
-            ]
-        )
-    else:
-        # Console logging for interactive mode
-        logging.basicConfig(
-            level=log_level,
-            format=log_format,
-            handlers=[logging.StreamHandler()]
-        )
-    
+
+    handlers = []
+    try:
+        handlers.append(logging.FileHandler(LOG_FILE))
+    except Exception as err:
+        print(f"Warning: unable to open log file {LOG_FILE}: {err}")
+    handlers.append(logging.StreamHandler())
+
+    logging.basicConfig(
+        level=log_level,
+        format=log_format,
+        handlers=handlers
+    )
+
     return logging.getLogger(__name__)
 
 logger = setup_logging()

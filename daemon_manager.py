@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Linux systemd daemon installer and manager for Trakt Discord Presence.
+Cross-platform daemon installer and manager for Trakt Discord Presence.
+Supports Linux (systemd) and macOS (launchd).
 """
 
 import os
@@ -9,6 +10,8 @@ import subprocess
 import shutil
 from pathlib import Path
 import argparse
+import platform
+import textwrap
 
 class SystemdInstaller:
     def __init__(self):
@@ -136,7 +139,7 @@ WantedBy=default.target
         """Start the service."""
         subprocess.run(["systemctl", "--user", "start", self.service_name], check=True)
         print("✅ Service started!")
-    
+
     def stop(self):
         """Stop the service."""
         subprocess.run(["systemctl", "--user", "stop", self.service_name], check=True)
@@ -152,12 +155,12 @@ WantedBy=default.target
         if follow:
             cmd.append("-f")
         subprocess.run(cmd)
-    
+
     def is_installed(self):
         """Check if service is installed."""
         service_file = self.user_service_dir / self.service_name
         return service_file.exists()
-    
+
     def is_running(self):
         """Check if service is running."""
         try:
@@ -169,6 +172,182 @@ WantedBy=default.target
         except subprocess.CalledProcessError:
             return False
 
+    def enable(self):
+        subprocess.run(["systemctl", "--user", "enable", self.service_name], check=True)
+        print("✅ Service enabled (will start on login).")
+
+    def disable(self):
+        subprocess.run(["systemctl", "--user", "disable", self.service_name], check=True)
+        print("✅ Service disabled (won't start on login).")
+
+class LaunchAgentInstaller:
+    def __init__(self):
+        self.label = "com.trakt.discord-presence"
+        self.plist_name = f"{self.label}.plist"
+        self.launch_agents_dir = Path.home() / "Library" / "LaunchAgents"
+        self.project_dir = Path(__file__).parent.absolute()
+        self.venv_dir = self.project_dir / ".venv"
+        self.main_script = self.project_dir / "main.py"
+        self.logs_dir = self.project_dir / "logs"
+        self.plist_path = self.launch_agents_dir / self.plist_name
+
+    def check_requirements(self):
+        if not shutil.which("launchctl"):
+            raise RuntimeError("launchctl not found. This system doesn't support launchd.")
+        if not self.main_script.exists():
+            raise RuntimeError(f"main.py not found in {self.project_dir}")
+        if not (self.project_dir / ".env").exists():
+            raise RuntimeError(".env file not found. Please configure your credentials first.")
+
+    def setup_venv(self):
+        if not self.venv_dir.exists():
+            print("Creating virtual environment...")
+            subprocess.run([sys.executable, "-m", "venv", str(self.venv_dir)], check=True)
+
+        pip_path = self.venv_dir / "bin" / "pip"
+        requirements_file = self.project_dir / "requirements.txt"
+        if requirements_file.exists():
+            print("Installing dependencies...")
+            subprocess.run([str(pip_path), "install", "--upgrade", "pip"], check=True)
+            subprocess.run([str(pip_path), "install", "-r", str(requirements_file)], check=True)
+
+    def create_logs_dir(self):
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
+
+    def create_plist(self):
+        python_path = self.venv_dir / "bin" / "python"
+        plist_content = textwrap.dedent(f"""
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+                <key>Label</key>
+                <string>{self.label}</string>
+                <key>ProgramArguments</key>
+                <array>
+                    <string>{python_path}</string>
+                    <string>{self.main_script}</string>
+                </array>
+                <key>WorkingDirectory</key>
+                <string>{self.project_dir}</string>
+                <key>RunAtLoad</key>
+                <true/>
+                <key>KeepAlive</key>
+                <dict>
+                    <key>SuccessfulExit</key>
+                    <false/>
+                </dict>
+                <key>StandardOutPath</key>
+                <string>{self.logs_dir / 'trakt-discord.log'}</string>
+                <key>StandardErrorPath</key>
+                <string>{self.logs_dir / 'trakt-discord-error.log'}</string>
+                <key>EnvironmentVariables</key>
+                <dict>
+                    <key>PATH</key>
+                    <string>/usr/local/bin:/usr/bin:/bin</string>
+                </dict>
+                <key>ThrottleInterval</key>
+                <integer>10</integer>
+            </dict>
+            </plist>
+        """)
+
+        self.launch_agents_dir.mkdir(parents=True, exist_ok=True)
+        self.plist_path.write_text(plist_content)
+        print(f"Created LaunchAgent plist: {self.plist_path}")
+
+    def load_agent(self):
+        subprocess.run(["launchctl", "unload", str(self.plist_path)], stderr=subprocess.DEVNULL)
+        subprocess.run(["launchctl", "load", str(self.plist_path)], check=True)
+
+    def install(self):
+        print("Installing Trakt Discord Presence LaunchAgent...")
+        self.check_requirements()
+        self.setup_venv()
+        self.create_logs_dir()
+        self.create_plist()
+        self.load_agent()
+        print("✅ LaunchAgent installed and started.")
+        print("To view logs: tail -f", self.logs_dir / "trakt-discord.log")
+
+    def uninstall(self):
+        print("Uninstalling Trakt Discord Presence LaunchAgent...")
+        if not self.plist_path.exists():
+            print("ℹ️  LaunchAgent not installed. Nothing to uninstall.")
+            return
+        subprocess.run(["launchctl", "unload", str(self.plist_path)], stderr=subprocess.DEVNULL)
+        if self.plist_path.exists():
+            self.plist_path.unlink()
+            print(f"Removed {self.plist_path}")
+        print("✅ LaunchAgent uninstalled.")
+
+    def start(self):
+        subprocess.run(["launchctl", "load", str(self.plist_path)], check=True)
+        print("✅ LaunchAgent started.")
+
+    def stop(self):
+        subprocess.run(["launchctl", "unload", str(self.plist_path)], check=True)
+        print("✅ LaunchAgent stopped.")
+
+    def restart(self):
+        subprocess.run(["launchctl", "unload", str(self.plist_path)], stderr=subprocess.DEVNULL)
+        subprocess.run(["launchctl", "load", str(self.plist_path)], check=True)
+        print("✅ LaunchAgent restarted.")
+
+    def status(self):
+        if not self.plist_path.exists():
+            print("❌ LaunchAgent is not installed.")
+            return
+
+        result = subprocess.run(["launchctl", "list"], capture_output=True, text=True)
+        running = False
+        for line in result.stdout.splitlines():
+            if self.label in line:
+                parts = line.split()
+                if parts and parts[0].isdigit():
+                    print(f"✅ LaunchAgent running (PID {parts[0]})")
+                else:
+                    print("⚠️  LaunchAgent loaded but not currently running.")
+                running = True
+                break
+        if not running:
+            print("🔴 LaunchAgent not running. Use 'service.py start' to launch it.")
+
+    def logs(self, follow=False):
+        log_file = self.logs_dir / "trakt-discord.log"
+        if not log_file.exists():
+            print("No log file found at", log_file)
+            return
+        cmd = ["tail", "-n", "50"]
+        if follow:
+            cmd.append("-f")
+        cmd.append(str(log_file))
+        subprocess.run(cmd)
+
+    def is_installed(self):
+        return self.plist_path.exists()
+
+    def is_running(self):
+        result = subprocess.run(["launchctl", "list"], capture_output=True, text=True)
+        return self.label in result.stdout
+
+    def enable(self):
+        if not self.plist_path.exists():
+            print("❌ LaunchAgent not installed. Install first with 'service.py install'.")
+            return
+        subprocess.run(["launchctl", "load", str(self.plist_path)], stderr=subprocess.DEVNULL)
+        subprocess.run(["launchctl", "enable", "gui/{}/{}".format(os.getuid(), self.label)], stderr=subprocess.DEVNULL)
+        print("✅ LaunchAgent enabled.")
+
+    def disable(self):
+        if not self.plist_path.exists():
+            print("❌ LaunchAgent not installed.")
+            return
+        subprocess.run(["launchctl", "disable", "gui/{}/{}".format(os.getuid(), self.label)], stderr=subprocess.DEVNULL)
+        subprocess.run(["launchctl", "unload", str(self.plist_path)], stderr=subprocess.DEVNULL)
+        print("✅ LaunchAgent disabled.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Trakt Discord Presence Daemon Manager")
     parser.add_argument("action", choices=[
@@ -179,7 +358,13 @@ def main():
     
     args = parser.parse_args()
     
-    installer = SystemdInstaller()
+    if platform.system().lower() == "linux":
+        installer = SystemdInstaller()
+    elif platform.system().lower() == "darwin":
+        installer = LaunchAgentInstaller()
+    else:
+        print(f"Unsupported platform: {platform.system()}" )
+        sys.exit(1)
     
     try:
         if args.action == "install":
@@ -191,9 +376,7 @@ def main():
         elif args.action == "stop":
             installer.stop()
         elif args.action == "restart":
-            if installer.is_running():
-                installer.stop()
-            installer.start()
+            installer.restart()
         elif args.action == "status":
             installer.status()
         elif args.action == "logs":

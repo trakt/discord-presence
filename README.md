@@ -103,14 +103,14 @@ python3 main.py
 **Option B: Install as Daemon (Linux - Runs Automatically)**
 ```bash
 # Install and enable automatic startup
-python3 install.py install
+python3 service.py install
 
 # Management commands
-python3 install.py start    # Start the daemon
-python3 install.py stop     # Stop the daemon  
-python3 install.py status   # Check if running
-python3 install.py logs     # View logs
-python3 install.py uninstall # Remove daemon
+python3 service.py start    # Start the daemon
+python3 service.py stop     # Stop the daemon  
+python3 service.py status   # Check if running
+python3 service.py logs     # View logs
+python3 service.py uninstall # Remove daemon
 ```
 
 **First-time setup (both options):**
@@ -150,13 +150,13 @@ The bot can run as a system daemon that automatically starts on boot and runs in
 ### **Quick Daemon Setup:**
 ```bash
 # Test your configuration first
-python3 install.py test
+python3 service.py test
 
 # Install and enable daemon
-python3 install.py install
+python3 service.py install
 
 # Check if it's running
-python3 install.py status
+python3 service.py status
 ```
 
 ### **Daemon Features:**
@@ -168,20 +168,52 @@ python3 install.py status
 
 ### **Daemon Management:**
 ```bash
-python3 install.py start     # Start the daemon
-python3 install.py stop      # Stop the daemon
-python3 install.py restart   # Restart the daemon
-python3 install.py status    # Show current status
-python3 install.py logs      # View recent logs (Ctrl+C to exit)
-python3 install.py uninstall # Remove daemon completely
+python3 service.py start     # Start the daemon
+python3 service.py stop      # Stop the daemon  
+python3 service.py restart   # Restart the daemon
+python3 service.py enable    # Enable auto-start on login
+python3 service.py disable   # Disable auto-start
+python3 service.py status    # Show current status
+python3 service.py logs      # View recent logs (Ctrl+C to exit)
+python3 service.py uninstall # Remove daemon completely
 ```
 
+## 🍎 Daemon Mode (macOS)
+
+Launchd support lets the bot run automatically whenever you log in.
+
+### **Quick LaunchAgent Setup:**
+```bash
+# Test your configuration first
+python3 service.py test
+
+# Install and load the LaunchAgent
+python3 service.py install
+
+# Check if it's running
+python3 service.py status
+```
+
+### **LaunchAgent Management:**
+```bash
+python3 service.py start     # Load and start the LaunchAgent
+python3 service.py stop      # Unload (stop) the LaunchAgent
+python3 service.py restart   # Reload the LaunchAgent
+python3 service.py enable    # Enable auto-start on login
+python3 service.py disable   # Disable auto-start
+python3 service.py status    # Show LaunchAgent status
+python3 service.py logs      # Tail the launch agent logs
+python3 service.py uninstall # Remove the LaunchAgent
+```
+
+Launchd writes stdout/stderr to `logs/trakt-discord*.log`. Use `python3 service.py logs` (Ctrl+C to exit) or `tail -f logs/trakt-discord.log` for live output.
+
 ### **Platform Support:**
-- ✅ **Linux** - Full systemd integration
-- ⚠️ **macOS** - Manual setup (instructions provided)
+- ✅ **Linux** - systemd integration
+- ✅ **macOS** - launchd integration
 - ⚠️ **Windows** - Manual setup (instructions provided)
 
-*Daemon support for macOS and Windows is planned for future releases.*
+*Windows daemon automation is planned for a future release.*
 
 ## 🛠️ Troubleshooting
 
@@ -215,8 +247,8 @@ python3 install.py uninstall # Remove daemon completely
 - ✅ Use your distribution's service manager (upstart, OpenRC, etc.)
 
 **Daemon installed but not starting**
-- ✅ Check logs: `python3 install.py logs`
-- ✅ Verify configuration: `python3 install.py test`
+- ✅ Check logs: `python3 service.py logs`
+- ✅ Verify configuration: `python3 service.py test`
 - ✅ Check if Discord is running: `ps aux | grep -i discord`
 
 **Daemon running but Discord not updating**
