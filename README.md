@@ -29,9 +29,11 @@ This bot connects your [Trakt.tv](https://trakt.tv) account to Discord, displayi
    cd discord-presence
    ```
 
+   > **Command tip:** Use whichever command launches Python 3 on your system. On macOS this is usually `python3` / `pip3`; on Windows it may just be `python` / `pip`.
+
 2. **Install Python dependencies:**
    ```bash
-   pip install -r requirements.txt
+   python3 -m pip install -r requirements.txt
    ```
 
 ### Step 2: Create a Trakt.tv App
@@ -95,20 +97,20 @@ This bot connects your [Trakt.tv](https://trakt.tv) account to Discord, displayi
 
 **Option A: Quick Test (Recommended First)**
 ```bash
-python main.py
+python3 main.py
 ```
 
 **Option B: Install as Daemon (Linux - Runs Automatically)**
 ```bash
 # Install and enable automatic startup
-python install.py install
+python3 install.py install
 
 # Management commands
-python install.py start    # Start the daemon
-python install.py stop     # Stop the daemon  
-python install.py status   # Check if running
-python install.py logs     # View logs
-python install.py uninstall # Remove daemon
+python3 install.py start    # Start the daemon
+python3 install.py stop     # Stop the daemon  
+python3 install.py status   # Check if running
+python3 install.py logs     # View logs
+python3 install.py uninstall # Remove daemon
 ```
 
 **First-time setup (both options):**
@@ -148,13 +150,13 @@ The bot can run as a system daemon that automatically starts on boot and runs in
 ### **Quick Daemon Setup:**
 ```bash
 # Test your configuration first
-python install.py test
+python3 install.py test
 
 # Install and enable daemon
-python install.py install
+python3 install.py install
 
 # Check if it's running
-python install.py status
+python3 install.py status
 ```
 
 ### **Daemon Features:**
@@ -166,12 +168,12 @@ python install.py status
 
 ### **Daemon Management:**
 ```bash
-python install.py start     # Start the daemon
-python install.py stop      # Stop the daemon
-python install.py restart   # Restart the daemon
-python install.py status    # Show current status
-python install.py logs      # View recent logs (Ctrl+C to exit)
-python install.py uninstall # Remove daemon completely
+python3 install.py start     # Start the daemon
+python3 install.py stop      # Stop the daemon
+python3 install.py restart   # Restart the daemon
+python3 install.py status    # Show current status
+python3 install.py logs      # View recent logs (Ctrl+C to exit)
+python3 install.py uninstall # Remove daemon completely
 ```
 
 ### **Platform Support:**
@@ -209,12 +211,12 @@ python install.py uninstall # Remove daemon completely
 
 **"systemctl not found" or "systemd not available"**
 - ✅ You're not on a systemd Linux distribution
-- ✅ Run manually: `python main.py --daemon`
+- ✅ Run manually: `python3 main.py --daemon`
 - ✅ Use your distribution's service manager (upstart, OpenRC, etc.)
 
 **Daemon installed but not starting**
-- ✅ Check logs: `python install.py logs`
-- ✅ Verify configuration: `python install.py test`
+- ✅ Check logs: `python3 install.py logs`
+- ✅ Verify configuration: `python3 install.py test`
 - ✅ Check if Discord is running: `ps aux | grep -i discord`
 
 **Daemon running but Discord not updating**
@@ -335,7 +337,7 @@ Having issues?
 2. **Search existing GitHub issues**
 3. **Create a new issue** with:
    - Your operating system
-   - Python version (`python --version`)
+   - Python version (`python3 --version` or `python --version`)
    - Error messages (remove any API keys first!)
 
 ---
