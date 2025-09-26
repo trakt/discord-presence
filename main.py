@@ -19,6 +19,7 @@ TRAKT_CLIENT_ID = os.getenv("TRAKT_CLIENT_ID")
 TRAKT_CLIENT_SECRET = os.getenv("TRAKT_CLIENT_SECRET")
 TRAKT_APPLICATION_ID = os.getenv("TRAKT_APPLICATION_ID")
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
+LOG_LEVEL_NAME = (os.getenv("LOG_LEVEL") or "INFO").strip()
 
 # Daemon mode configuration
 DAEMON_MODE = "--daemon" in sys.argv or os.getenv("DAEMON_MODE") == "1"
@@ -45,9 +46,38 @@ TOKEN_REFRESH_THRESHOLD = 0.8
 TOKEN_REFRESH_BUFFER_SECONDS = 300  # 5 minutes grace window
 
 # --- Logging Setup ---
+
+
+def _resolve_log_level(name):
+    """Resolve log level names or numeric strings to logging constants."""
+    if not name:
+        return logging.INFO
+
+    candidate = str(name).strip()
+    if not candidate:
+        return logging.INFO
+
+    upper = candidate.upper()
+    if hasattr(logging, upper):
+        level = getattr(logging, upper)
+        if isinstance(level, int):
+            return level
+
+    try:
+        numeric_level = int(candidate)
+        return numeric_level
+    except ValueError:
+        pass
+
+    logging.getLogger("discord_presence").warning(
+        "Unrecognized LOG_LEVEL '%s', defaulting to INFO", name
+    )
+    return logging.INFO
+
+
 def setup_logging():
     """Setup logging for daemon or interactive mode."""
-    log_level = logging.INFO
+    log_level = _resolve_log_level(LOG_LEVEL_NAME)
     log_format = '%(asctime)s - %(levelname)s - %(message)s'
     
     if DAEMON_MODE:
@@ -223,7 +253,7 @@ def load_stored_tokens():
         if should_refresh and token_data.get('OAUTH_REFRESH'):
             logger.info("Stored tokens nearing expiry, attempting proactive refresh...")
             if maybe_refresh_tokens(force=True):
-                print("Loaded stored tokens successfully")
+                logger.info("Loaded stored tokens successfully")
                 return True
             logger.warning("Automatic refresh attempt failed, will fall back to next credential")
             continue
@@ -232,7 +262,7 @@ def load_stored_tokens():
             logger.info(f"Stored tokens in {candidate['path'].name} are expired")
             continue
 
-        print("Loaded stored tokens successfully")
+        logger.info("Loaded stored tokens successfully")
         _persist_token_data(token_data)
         return True
 
@@ -290,7 +320,6 @@ def authenticate_trakt():
     """
     Handles Trakt.tv authentication with automatic token loading and PIN fallback.
     """
-    print("Authenticating with Trakt.tv...")
     logger.info("Authenticating with Trakt.tv...")
 
     # Set the application ID first
@@ -303,24 +332,24 @@ def authenticate_trakt():
             # Use get_user_settings instead of last_activities
             from trakt.users import get_user_settings
             test_call = get_user_settings()
-            print("Successfully authenticated using stored tokens!")
+            logger.info("Successfully authenticated using stored tokens!")
             return True
         except Exception as e:
-            print(f"Stored tokens failed verification: {e}")
-            print("Falling back to PIN authentication...")
+            logger.warning("Stored tokens failed verification: %s", e)
+            logger.info("Falling back to PIN authentication...")
 
     # If stored tokens don't work or don't exist, use PIN authentication
     try:
-        print("Starting PIN authentication...")
+        logger.info("Starting PIN authentication...")
         trakt.init(client_id=TRAKT_CLIENT_ID, client_secret=TRAKT_CLIENT_SECRET, store=True)
         persist_current_tokens()
         # Reload from disk once so we normalize timestamps and sync both token files
         load_stored_tokens()
-        print("PIN authentication successful!")
+        logger.info("PIN authentication successful!")
         return True
 
     except Exception as e:
-        print(f"PIN authentication failed: {e}")
+        logger.error("PIN authentication failed: %s", e)
         return False
 
 def get_watching_status():
@@ -337,14 +366,14 @@ def get_watching_status():
         watching = user_me.watching
 
         if watching:
-            print(f"Currently watching: {watching}")
+            logger.debug("Currently watching: %s", watching)
             return watching
         else:
-            print("Not currently checked in to anything")
+            logger.debug("Not currently checked in to anything")
             return None
 
     except Exception as e:
-        print(f"Error getting watching status: {e}")
+        logger.warning("Error getting watching status: %s", e)
         return None
 
 def get_poster_url(watching_item):
@@ -378,7 +407,7 @@ def get_poster_url(watching_item):
                             return extracted
 
             except Exception as e:
-                print(f"Error searching for show: {e}")
+                logger.debug("Error searching for show artwork: %s", e)
 
             # Fallback: try to extract from episode images
             if hasattr(watching_item, 'images') and watching_item.images:
@@ -399,7 +428,7 @@ def get_poster_url(watching_item):
         return None
 
     except Exception as e:
-        print(f"Error getting poster URL: {e}")
+        logger.warning("Error getting poster URL: %s", e)
         return None
 
 def extract_image_url(image_data):
@@ -436,7 +465,7 @@ def extract_image_url(image_data):
 
         return None
     except Exception as e:
-        print(f"Error extracting image URL: {e}")
+        logger.debug("Error extracting image URL: %s", e)
         return None
 
 
@@ -618,14 +647,14 @@ def connect_to_discord():
     Returns (rpc_client, success_bool)
     """
     try:
-        print("Attempting Discord connection...")
+        logger.info("Attempting Discord connection...")
         rpc = DiscordIPC(DISCORD_CLIENT_ID)
         rpc.connect()
-        print("Connected to Discord Rich Presence.")
+        logger.info("Connected to Discord Rich Presence.")
         return rpc, True
     except Exception as e:
-        print(f"Could not connect to Discord: {e}")
-        print("Will continue without Discord and retry later...")
+        logger.warning("Could not connect to Discord: %s", e)
+        logger.info("Will continue without Discord and retry later...")
         return None, False
 
 def update_discord_presence_with_reconnect(rpc_container, watching_item):
@@ -635,7 +664,7 @@ def update_discord_presence_with_reconnect(rpc_container, watching_item):
     """
     if not rpc_container[0]:
         # No connection, try to reconnect
-        print("No Discord connection, attempting to reconnect...")
+        logger.debug("No Discord connection, attempting to reconnect...")
         rpc_container[0], connected = connect_to_discord()
         if not connected:
             return False
@@ -670,9 +699,9 @@ def update_discord_presence_with_reconnect(rpc_container, watching_item):
             if hasattr(watching_item, 'year') and watching_item.year:
                 state = f"({watching_item.year})"
 
-        print(f"Updating Discord: {details} - {state}")
+        logger.debug("Updating Discord presence: %s — %s", details, state)
         if poster_url:
-            print(f"Using poster: {poster_url}")
+            logger.debug("Using poster artwork: %s", poster_url)
 
         try:
             rpc_container[0].update(
@@ -687,9 +716,9 @@ def update_discord_presence_with_reconnect(rpc_container, watching_item):
             )
             return True
         except Exception as e:
-            print(f"Failed to update Discord presence: {e}")
+            logger.warning("Failed to update Discord presence: %s", e)
             # Check if it's a connection error and reset connection
-            print("Discord connection may be lost, will attempt to reconnect on next update...")
+            logger.info("Discord connection may be lost, will attempt to reconnect on next update...")
             try:
                 rpc_container[0].close()
             except:
@@ -697,15 +726,15 @@ def update_discord_presence_with_reconnect(rpc_container, watching_item):
             rpc_container[0] = None
             return False
     else:
-        print("Not watching anything. Clearing Discord presence.")
+        logger.debug("No active watch detected. Clearing Discord presence.")
         _reset_activity_state()
         try:
             rpc_container[0].clear()
             return True
         except Exception as e:
-            print(f"Failed to clear Discord presence: {e}")
+            logger.warning("Failed to clear Discord presence: %s", e)
             # Check if it's a connection error and reset connection
-            print("Discord connection may be lost, will attempt to reconnect on next update...")
+            logger.info("Discord connection may be lost, will attempt to reconnect on next update...")
             try:
                 rpc_container[0].close()
             except:
@@ -718,7 +747,7 @@ def main():
     Main function to initialize and run the application.
     """
     if not all([TRAKT_CLIENT_ID, TRAKT_CLIENT_SECRET, DISCORD_CLIENT_ID]):
-        print("Error: Please ensure TRAKT_CLIENT_ID, TRAKT_CLIENT_SECRET, and DISCORD_CLIENT_ID are set in your .env file.")
+        logger.error("Missing required credentials. Please set TRAKT_CLIENT_ID, TRAKT_CLIENT_SECRET, and DISCORD_CLIENT_ID in your .env file.")
         return
 
     if not authenticate_trakt():
@@ -730,13 +759,13 @@ def main():
     # Initial Discord connection attempt
     rpc_client, connected = connect_to_discord()
     if not connected:
-        print("Warning: Could not connect to Discord initially. Will keep trying...")
+        logger.warning("Could not connect to Discord initially. Will keep trying...")
 
     # Use a list container so we can modify the connection from within functions
     rpc_container = [rpc_client]
 
     try:
-        print("Starting monitoring loop...")
+        logger.info("Starting monitoring loop...")
         consecutive_failures = 0
 
         while not shutdown_requested:
@@ -749,8 +778,8 @@ def main():
             else:
                 consecutive_failures += 1
                 if consecutive_failures >= 3:
-                    print("Multiple Discord connection failures. Discord may not be running.")
-                    print("Will continue trying to reconnect...")
+                    logger.warning("Multiple Discord connection failures. Discord may not be running.")
+                    logger.info("Will continue trying to reconnect...")
                     # Add a longer delay after multiple failures
                     time.sleep(30)
                     consecutive_failures = 0
@@ -763,16 +792,16 @@ def main():
                 time.sleep(1)
 
         if shutdown_requested:
-            print("Shutdown requested. Exiting monitoring loop...")
+            logger.info("Shutdown requested. Exiting monitoring loop...")
 
     except KeyboardInterrupt:
-        print("\nExiting...")
+        logger.info("Exiting...")
     finally:
         # Clean up Discord connection if it exists
         if rpc_container[0]:
             try:
                 rpc_container[0].close()
-                print("Discord connection closed.")
+                logger.debug("Discord connection closed.")
             except:
                 pass
 
