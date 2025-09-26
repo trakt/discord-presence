@@ -10,6 +10,7 @@ from pathlib import Path
 from discord_ipc import DiscordIPC  # Use our custom IPC implementation
 import trakt
 from dotenv import load_dotenv
+from types import SimpleNamespace
 
 # Load environment variables from .env file
 load_dotenv()
@@ -28,6 +29,7 @@ LOG_FILE = BASE_DIR / "trakt-discord.log"
 LOCAL_TOKEN_FILE = BASE_DIR / ".pytrakt.json"
 HOME_TOKEN_FILE = Path.home() / ".pytrakt.json"
 TOKEN_FILES = (LOCAL_TOKEN_FILE, HOME_TOKEN_FILE)
+PID_FILE = BASE_DIR / "discord_presence.pid"
 
 CURRENT_ACTIVITY_STATE = {
     "item_key": None,
@@ -101,6 +103,55 @@ def setup_logging():
     return logging.getLogger(__name__)
 
 logger = setup_logging()
+
+
+def _is_process_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Process exists but we might not own it
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def acquire_single_instance() -> bool:
+    """Ensure only one instance of the bot runs at a time."""
+    try:
+        if PID_FILE.exists():
+            existing_pid = int(PID_FILE.read_text().strip() or 0)
+            if _is_process_running(existing_pid) and existing_pid != os.getpid():
+                logger.error(
+                    "Another Discord Presence instance is already running (PID %s). Exiting.",
+                    existing_pid,
+                )
+                return False
+        PID_FILE.write_text(str(os.getpid()))
+        return True
+    except Exception as err:
+        logger.error("Unable to acquire single-instance lock: %s", err)
+        return False
+
+
+def release_single_instance():
+    try:
+        if PID_FILE.exists():
+            PID_FILE.unlink()
+    except Exception as err:
+        logger.debug("Failed to remove PID file: %s", err)
+
+
+def _namespace(payload):
+    if isinstance(payload, dict):
+        return SimpleNamespace(**{key: _namespace(value) for key, value in payload.items()})
+    if isinstance(payload, list):
+        return [_namespace(item) for item in payload]
+    return payload
 
 # --- Signal Handlers ---
 shutdown_requested = False
@@ -353,77 +404,87 @@ def authenticate_trakt():
         return False
 
 def get_watching_status():
-    """
-    Fetches the current watching status from Trakt.tv.
-    Uses User('me').watching to get live check-in status.
-    Returns the currently watching episode/movie or None.
-    """
+    """Fetch the current watching status with extended artwork from Trakt."""
     try:
-        from trakt.users import User
-
-        # Get the current user and check what they're watching
-        user_me = User('me')
-        watching = user_me.watching
-
-        if watching:
-            logger.debug("Currently watching: %s", watching)
-            return watching
-        else:
-            logger.debug("Not currently checked in to anything")
-            return None
-
-    except Exception as e:
-        logger.warning("Error getting watching status: %s", e)
+        data = trakt.core.api().get('users/me/watching?extended=full,images')
+    except Exception as exc:
+        logger.warning("Error getting watching status: %s", exc)
         return None
+
+    if not data:
+        logger.debug("Not currently checked in to anything")
+        return None
+
+    media_type = data.get('type')
+    base = {
+        'type': media_type,
+        'progress': data.get('progress'),
+        'started_at': data.get('started_at'),
+        'watched_at': data.get('watched_at'),
+        'paused_at': data.get('paused_at'),
+        'expires_at': data.get('expires_at'),
+    }
+
+    if media_type == 'movie':
+        movie = data.get('movie', {}) or {}
+        base.update(movie)
+        base['movie'] = movie
+        logger.debug("Currently watching movie: %s", movie.get('title'))
+    elif media_type == 'episode':
+        episode = data.get('episode', {}) or {}
+        show = data.get('show', {}) or {}
+        base.update({
+            'title': episode.get('title'),
+            'season': episode.get('season'),
+            'number': episode.get('number'),
+            'ids': episode.get('ids'),
+            'episode': episode,
+            'show': show,
+            'runtime': episode.get('runtime') or show.get('runtime'),
+        })
+        logger.debug(
+            "Currently watching episode: %s S%02dE%02d",
+            show.get('title'),
+            episode.get('season') or 0,
+            episode.get('number') or 0,
+        )
+    else:
+        logger.debug("Watching item type %s", media_type)
+
+    return _namespace(base)
 
 def get_poster_url(watching_item):
     """
-    Get poster URL for the currently watching show/movie.
+    Get poster URL for the currently watching show/movie from extended Trakt images.
     Returns a valid URL string or None if not available.
     """
     try:
-        # For TV episodes, get the show poster by searching for the show
-        if hasattr(watching_item, 'show') and watching_item.show:
-            show_title = str(watching_item.show)
+        media_type = getattr(watching_item, 'type', None)
 
-            # Search for the show to get full object with TMDB ID
-            try:
-                from trakt.tv import search
-                search_results = search(show_title, search_type='show')
-                if search_results and len(search_results) > 0:
-                    show_obj = search_results[0]  # Take first/best match
+        if media_type == 'episode':
+            show = getattr(watching_item, 'show', None)
+            if show and getattr(show, 'images', None):
+                poster = extract_image_url(show.images)
+                if poster:
+                    return poster
 
-                    # Try TMDB poster URL first (best quality)
-                    if hasattr(show_obj, 'tmdb') and show_obj.tmdb:
-                        # Use TMDB API v3 poster URL format
-                        # Note: This requires the poster_path from TMDB API, but we'll try a common approach
-                        # For now, let's use Trakt's poster if TMDB doesn't work
-                        pass
+            episode = getattr(watching_item, 'episode', None)
+            if episode and getattr(episode, 'images', None):
+                poster = extract_image_url(episode.images)
+                if poster:
+                    return poster
 
-                    # Use Trakt's poster images
-                    if hasattr(show_obj, 'images') and show_obj.images:
-                        extracted = extract_image_url(show_obj.images)
-                        if extracted:
-                            return extracted
+        elif media_type == 'movie':
+            movie = getattr(watching_item, 'movie', None)
+            if movie and getattr(movie, 'images', None):
+                poster = extract_image_url(movie.images)
+                if poster:
+                    return poster
 
-            except Exception as e:
-                logger.debug("Error searching for show artwork: %s", e)
-
-            # Fallback: try to extract from episode images
-            if hasattr(watching_item, 'images') and watching_item.images:
-                return extract_image_url(watching_item.images)
-
-        # For movies, try episode/movie TMDB ID
-        elif hasattr(watching_item, 'tmdb') and watching_item.tmdb:
-            # For movies, we could use TMDB API but for now use Trakt images
-            pass
-
-        # Final fallback: try any images on the item
-        if hasattr(watching_item, 'images') and watching_item.images:
-            return extract_image_url(watching_item.images)
-
-        if hasattr(watching_item, 'images_ext') and watching_item.images_ext:
-            return extract_image_url(watching_item.images_ext)
+            if getattr(watching_item, 'images', None):
+                poster = extract_image_url(watching_item.images)
+                if poster:
+                    return poster
 
         return None
 
@@ -437,36 +498,71 @@ def extract_image_url(image_data):
     Prioritizes posters over screenshots for better visuals.
     """
     try:
+        if image_data is None:
+            return None
+
+        if isinstance(image_data, SimpleNamespace):
+            image_data = vars(image_data)
+
         if isinstance(image_data, str):
-            # Already a string URL
-            return image_data if image_data.startswith('http') else f"https://{image_data}"
-        elif isinstance(image_data, dict):
-            # Look for poster images first (best for shows), then other types
-            image_types = ['poster', 'thumb', 'fanart', 'screenshot']
+            return _normalize_image_url(image_data)
+
+        if isinstance(image_data, dict):
+            image_types = ['poster', 'fanart', 'thumb', 'screenshot']
 
             for img_type in image_types:
-                if img_type in image_data:
-                    img_value = image_data[img_type]
+                if img_type not in image_data:
+                    continue
+                img_value = image_data[img_type]
 
-                    if isinstance(img_value, list) and len(img_value) > 0:
-                        url = img_value[0]
-                        return url if url.startswith('http') else f"https://{url}"
-                    elif isinstance(img_value, str):
-                        return img_value if img_value.startswith('http') else f"https://{img_value}"
+                if isinstance(img_value, list):
+                    for entry in img_value:
+                        url = _extract_url_from_entry(entry)
+                        if url:
+                            return url
+                else:
+                    url = _extract_url_from_entry(img_value)
+                    if url:
+                        return url
 
-            # If it's a dict, try to get any URL-like value
-            for key, value in image_data.items():
-                if isinstance(value, list) and len(value) > 0:
-                    url = str(value[0])
-                    if any(ext in url for ext in ['.jpg', '.png', '.webp', '.jpeg']):
-                        return url if url.startswith('http') else f"https://{url}"
-                elif isinstance(value, str) and any(ext in value for ext in ['.jpg', '.png', '.webp', '.jpeg', 'http']):
-                    return value if value.startswith('http') else f"https://{value}"
+            for value in image_data.values():
+                url = None
+                if isinstance(value, list):
+                    for entry in value:
+                        url = _extract_url_from_entry(entry)
+                        if url:
+                            break
+                else:
+                    url = _extract_url_from_entry(value)
+                if url:
+                    return url
 
         return None
     except Exception as e:
         logger.debug("Error extracting image URL: %s", e)
         return None
+
+
+def _extract_url_from_entry(entry):
+    if isinstance(entry, str):
+        return _normalize_image_url(entry)
+    if isinstance(entry, dict):
+        for key in ('full', 'medium', 'large', 'thumb', 'original', 'url', 'link'):
+            if entry.get(key):
+                url = _normalize_image_url(entry[key])
+                if url:
+                    return url
+    return None
+
+
+def _normalize_image_url(candidate):
+    if not candidate:
+        return None
+    url = str(candidate)
+    if not url.startswith('http'):
+        url = url.lstrip('/')
+        url = f"https://{url}"
+    return url
 
 
 def _normalize_timestamp(value):
@@ -750,7 +846,12 @@ def main():
         logger.error("Missing required credentials. Please set TRAKT_CLIENT_ID, TRAKT_CLIENT_SECRET, and DISCORD_CLIENT_ID in your .env file.")
         return
 
+    has_lock = acquire_single_instance()
+    if not has_lock:
+        return
+
     if not authenticate_trakt():
+        release_single_instance()
         return
 
     # Ensure freshly-loaded tokens are healthy before proceeding
@@ -793,6 +894,10 @@ def main():
 
         if shutdown_requested:
             logger.info("Shutdown requested. Exiting monitoring loop...")
+            try:
+                update_discord_presence_with_reconnect(rpc_container, None)
+            except Exception as clear_err:
+                logger.debug("Failed to clear Discord presence during shutdown: %s", clear_err)
 
     except KeyboardInterrupt:
         logger.info("Exiting...")
@@ -811,6 +916,8 @@ def main():
                     logger.debug("Discord connection closed.")
                 except Exception as close_err:
                     logger.debug("Error while closing Discord connection: %s", close_err)
+        if has_lock:
+            release_single_instance()
 
 if __name__ == "__main__":
     exit_code = main()

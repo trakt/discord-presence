@@ -3,3 +3,4 @@ __pycache__/
 .env
 .pytrakt.json
 logs/
+discord_presence.pid
