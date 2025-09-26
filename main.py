@@ -546,7 +546,7 @@ def main():
         print("Starting monitoring loop...")
         consecutive_failures = 0
 
-        while True:
+        while not shutdown_requested:
             watching_status = get_watching_status()
             success = update_discord_presence_with_reconnect(rpc_container, watching_status)
 
@@ -563,7 +563,13 @@ def main():
                     continue
 
             # Check for new status every 15 seconds
-            time.sleep(15)
+            for _ in range(15):
+                if shutdown_requested:
+                    break
+                time.sleep(1)
+
+        if shutdown_requested:
+            print("Shutdown requested. Exiting monitoring loop...")
 
     except KeyboardInterrupt:
         print("\nExiting...")
