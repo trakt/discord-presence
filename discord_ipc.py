@@ -91,7 +91,15 @@ class DiscordIPC:
                 f"/tmp/discord-ipc-{pipe_id}",  # Linux standard location
                 f"{tempfile.gettempdir()}/discord-ipc-{pipe_id}",  # System temp dir
             ]
-            
+
+            # Add paths for Flatpak and Snap if on Linux
+            if os.uname().sysname == 'Linux':
+                uid = os.getuid()
+                possible_paths.extend([
+                    f"/run/user/{uid}/app/com.discordapp.Discord/discord-ipc-{pipe_id}",  # Flatpak
+                    f"/run/user/{uid}/snap.discord/discord-ipc-{pipe_id}",  # Snap
+                ])
+
             # On macOS, search in /var/folders/*/T/
             if os.uname().sysname == 'Darwin':  # macOS
                 patterns = [
